@@ -1,8 +1,39 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a1628;
+  --foreground: #e2e8f0;
+
+  --tl-bg-0: #0a1628;
+  --tl-bg-1: #1a2b4a;
+  --tl-bg-2: #0f1f3a;
+  --tl-surface-1: #ffffff;
+  --tl-surface-2: #f8fafc;
+  --tl-text-strong: #0f172a;
+  --tl-text-default: #334155;
+  --tl-text-weak: #64748b;
+  --tl-text-inverse: #f8fafc;
+  --tl-text-inverse-weak: #cbd5f5;
+  --tl-border-subtle: #e2e8f0;
+  --tl-border-strong: #cbd5f5;
+  --tl-accent: #10b981;
+  --tl-accent-strong: #059669;
+  --tl-success: #16a34a;
+  --tl-warning: #f59e0b;
+  --tl-error: #ef4444;
+  --tl-info: #3b82f6;
+  --tl-radius-sm: 8px;
+  --tl-radius-md: 12px;
+  --tl-radius-lg: 16px;
+  --tl-radius-xl: 20px;
+
+  --ui-glass-bg: rgba(255, 255, 255, 0.08);
+  --ui-glass-bg-strong: rgba(255, 255, 255, 0.12);
+  --ui-glass-border: rgba(255, 255, 255, 0.2);
+  --ui-text-muted: rgba(255, 255, 255, 0.6);
+  --ui-text-subtle: rgba(255, 255, 255, 0.5);
+  --ui-blur-sm: 8px;
+  --ui-blur-md: 12px;
 }
 
 @theme inline {
@@ -12,15 +43,54 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  background: linear-gradient(135deg, #0a1628 0%, #1a2b4a 50%, #0f1f3a 100%);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  .ui-glass {
+    background: var(--ui-glass-bg);
+    border: 1px solid var(--ui-glass-border);
+    backdrop-filter: blur(var(--ui-blur-sm));
+  }
+
+  .ui-glass-strong {
+    background: var(--ui-glass-bg-strong);
+    border: 1px solid var(--ui-glass-border);
+    backdrop-filter: blur(var(--ui-blur-md));
+  }
+
+  .ui-glass-panel {
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.1),
+      rgba(255, 255, 255, 0.05)
+    );
+    border: 1px solid var(--ui-glass-border);
+    backdrop-filter: blur(var(--ui-blur-sm));
+  }
+
+  .ui-glass-panel-strong {
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.12),
+      rgba(255, 255, 255, 0.06)
+    );
+    border: 1px solid var(--ui-glass-border);
+    backdrop-filter: blur(var(--ui-blur-md));
+  }
+
+  .ui-text-muted {
+    color: var(--ui-text-muted);
+  }
+
+  .ui-text-subtle {
+    color: var(--ui-text-subtle);
+  }
+
+  .ui-border-glass {
+    border-color: var(--ui-glass-border);
+  }
 }
