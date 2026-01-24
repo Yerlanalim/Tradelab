@@ -1,7 +1,7 @@
 import { AppShell } from "@/components/layout/AppShell";
 import { Section } from "@/components/layout/Section";
 import { ContentList } from "@/components/content/ContentList";
-import ChinaManufacturingMap from "@/components/map/ChinaManufacturingMap";
+import { MapInteractive } from "@/components/map/MapInteractive";
 
 export default function MapPage() {
   return (
@@ -13,9 +13,7 @@ export default function MapPage() {
         title="Карта"
         description="Выберите отрасль, провинцию или город, чтобы увидеть специализацию."
       >
-        <div className="h-[70vh] min-h-[520px] max-h-[780px] overflow-hidden rounded-2xl border border-white/10 ui-glass-panel">
-          <ChinaManufacturingMap className="h-full" />
-        </div>
+        <MapInteractive />
       </Section>
       <Section title="Контент" className="mt-6">
         <ContentList type="map" />

@@ -1,18 +1,18 @@
 import { AppShell } from "@/components/layout/AppShell";
 import { Section } from "@/components/layout/Section";
 import { ContentList } from "@/components/content/ContentList";
-import { PagePlaceholder } from "@/components/layout/PagePlaceholder";
 
 type ExhibitionsPageProps = {
-  searchParams?: {
+  searchParams?: Promise<{
     city?: string;
     province?: string;
-  };
+  }>;
 };
 
-export default function ExhibitionsPage({ searchParams }: ExhibitionsPageProps) {
-  const city = searchParams?.city;
-  const province = searchParams?.province;
+export default async function ExhibitionsPage({ searchParams }: ExhibitionsPageProps) {
+  const resolvedParams = (await searchParams) ?? {};
+  const city = resolvedParams.city;
+  const province = resolvedParams.province;
 
   return (
     <AppShell
@@ -26,13 +26,9 @@ export default function ExhibitionsPage({ searchParams }: ExhibitionsPageProps) 
             {province && <div>Фильтр по провинции: {province}</div>}
           </div>
         )}
-        <PagePlaceholder
-          title="Раздел выставок в разработке"
-          description="Скоро добавим каталог выставок с фильтрацией."
-        />
       </Section>
       <Section title="Контент" className="mt-6">
-        <ContentList type="exhibition" />
+        <ContentList type="exhibition" tags={[city, province].filter(Boolean) as string[]} />
       </Section>
     </AppShell>
   );

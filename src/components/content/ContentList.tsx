@@ -13,9 +13,10 @@ type ContentItem = {
 
 type ContentListProps = {
   type: "library" | "map" | "zone" | "exhibition";
+  tags?: string[];
 };
 
-export function ContentList({ type }: ContentListProps) {
+export function ContentList({ type, tags }: ContentListProps) {
   const [items, setItems] = useState<ContentItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -23,11 +24,15 @@ export function ContentList({ type }: ContentListProps) {
     let isMounted = true;
     const load = async () => {
       setIsLoading(true);
-      const { data } = await supabaseClient
+      let query = supabaseClient
         .from("content_items")
         .select("id,title,body,tags")
         .eq("type", type)
         .order("created_at", { ascending: false });
+      if (tags?.length) {
+        query = query.contains("tags", tags);
+      }
+      const { data } = await query;
 
       if (isMounted) {
         setItems(data ?? []);
@@ -38,7 +43,7 @@ export function ContentList({ type }: ContentListProps) {
     return () => {
       isMounted = false;
     };
-  }, [type]);
+  }, [type, tags]);
 
   if (isLoading) {
     return (

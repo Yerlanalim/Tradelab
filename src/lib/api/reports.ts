@@ -9,28 +9,47 @@ type SupabaseReportRow = {
   result_summary: unknown;
   created_at: string;
   pdf_url: string | null;
+  web_report_url: string | null;
 };
 
-const mapReport = (row: SupabaseReportRow): Report => ({
-  id: row.id,
-  orderId: row.order_id,
-  productType: row.product_type as Report["productType"],
-  title: row.result_summary ? "Отчет готов" : "Отчет",
-  status: row.status as Report["status"],
-  summary:
-    typeof row.result_summary === "string"
+const mapReport = (row: SupabaseReportRow): Report => {
+  const summaryObject =
+    row.result_summary && typeof row.result_summary === "object"
+      ? (row.result_summary as Record<string, unknown>)
+      : undefined;
+  const title =
+    typeof summaryObject?.title === "string"
+      ? summaryObject.title
+      : row.result_summary
+      ? "Отчет готов"
+      : "Отчет";
+  const summary =
+    typeof summaryObject?.summary === "string"
+      ? summaryObject.summary
+      : typeof row.result_summary === "string"
       ? row.result_summary
       : row.result_summary
       ? JSON.stringify(row.result_summary)
-      : "",
-  createdAt: row.created_at,
-  pdfUrl: row.pdf_url ?? undefined,
-});
+      : "";
+
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    productType: row.product_type as Report["productType"],
+    title,
+    status: row.status as Report["status"],
+    summary,
+    createdAt: row.created_at,
+    pdfUrl: row.pdf_url ?? undefined,
+    webReportUrl: row.web_report_url ?? undefined,
+    resultSummary: summaryObject,
+  };
+};
 
 export async function fetchReportsForUser(): Promise<Report[]> {
   const { data, error } = await supabaseClient
     .from("reports")
-    .select("id,order_id,product_type,status,result_summary,created_at,pdf_url")
+    .select("id,order_id,product_type,status,result_summary,created_at,pdf_url,web_report_url")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -43,7 +62,7 @@ export async function fetchReportsForUser(): Promise<Report[]> {
 export async function fetchReportById(id: string): Promise<Report | null> {
   const { data, error } = await supabaseClient
     .from("reports")
-    .select("id,order_id,product_type,status,result_summary,created_at,pdf_url")
+    .select("id,order_id,product_type,status,result_summary,created_at,pdf_url,web_report_url")
     .eq("id", id)
     .single();
 

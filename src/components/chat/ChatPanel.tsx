@@ -2,7 +2,7 @@
 
 import { Send, Sparkles, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/Button";
@@ -23,6 +23,11 @@ type ChatHistory = {
   messages: Message[] | null;
   created_at: string | null;
   last_message_at: string | null;
+  mode: string | null;
+  flow_state?: Record<string, unknown> | null;
+  tool_calls?: Record<string, unknown>[] | null;
+  entities?: Record<string, unknown> | null;
+  summary?: string | null;
 };
 
 const quickQuestions = [
@@ -49,6 +54,25 @@ const resolveSection = (pathname: string) => {
   return "general";
 };
 
+const resolveMode = (pathname: string) => {
+  if (pathname.startsWith("/products/supplier-search")) return "supplier_search";
+  if (
+    pathname.startsWith("/products/company-check") ||
+    pathname.startsWith("/products/export-profile") ||
+    pathname.startsWith("/products/market-analysis") ||
+    pathname.startsWith("/reports")
+  ) {
+    return "report";
+  }
+  return "assistant";
+};
+
+const modeLabel: Record<string, string> = {
+  assistant: "Assistant",
+  supplier_search: "Supplier Search",
+  report: "Report",
+};
+
 const toTitle = (text: string) => {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return "Новый диалог";
@@ -61,10 +85,42 @@ const formatHistoryLabel = (history: ChatHistory) => {
   return new Date(history.created_at).toLocaleDateString("ru-RU");
 };
 
+const normalizeFlowState = (state?: Record<string, unknown> | null) => {
+  if (!state) return null;
+  const updatedAt = typeof state.updated_at === "string" ? Date.parse(state.updated_at) : NaN;
+  if (!Number.isFinite(updatedAt)) return state;
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  return Date.now() - updatedAt > sevenDaysMs ? null : state;
+};
+
+type ChatMeta = {
+  tool_calls?: Record<string, unknown>[] | null;
+  entities?: Record<string, unknown> | null;
+  summary?: string | null;
+};
+
+const resolveSupplierStatus = (step?: string) => {
+  if (step === "paywall") {
+    return "Ожидаем подтверждение запуска (списание 500 TC).";
+  }
+  if (step === "preview") {
+    return "Preview: покажем 3–5 примеров перед оплатой.";
+  }
+  if (step === "analysis") {
+    return "Идет полный анализ, результат будет готов через несколько минут.";
+  }
+  return "Опишите товар и ключевые параметры, чтобы начать поиск.";
+};
+
 export function ChatPanel() {
+  const router = useRouter();
   const pathname = usePathname();
   const section = useMemo(() => resolveSection(pathname), [pathname]);
+  const mode = useMemo(() => resolveMode(pathname), [pathname]);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [suggestedChips, setSuggestedChips] = useState<
+    { id: string; label: string; action: "redirect" | "insert"; payload: string }[]
+  >([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const { user, isAuthenticated, isLoading: isAuthLoading } = useSupabaseAuth();
@@ -72,6 +128,10 @@ export function ChatPanel() {
   const [historyList, setHistoryList] = useState<ChatHistory[]>([]);
   const [isArchiveView, setIsArchiveView] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [flowState, setFlowState] = useState<Record<string, unknown> | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingText, setPendingText] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -80,13 +140,15 @@ export function ChatPanel() {
     setHistoryList([]);
     setIsArchiveView(false);
     setErrorMessage(null);
+    setSuggestedChips([]);
+    setFlowState(null);
     if (!isAuthenticated || isAuthLoading) return;
     let isActive = true;
     const loadHistory = async () => {
       const { data, error } = await supabaseClient
         .from("chat_history")
-        .select("id,title,messages,created_at,last_message_at")
-        .eq("section", section)
+        .select("id,title,messages,created_at,last_message_at,mode,flow_state,tool_calls,entities,summary")
+        .eq("mode", mode)
         .order("last_message_at", { ascending: false })
         .limit(20);
       if (!isActive) return;
@@ -100,13 +162,31 @@ export function ChatPanel() {
     return () => {
       isActive = false;
     };
-  }, [section, isAuthenticated, isAuthLoading]);
+  }, [mode, section, isAuthenticated, isAuthLoading]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storageKey = "tradelab_chat_session";
+    const existing = window.localStorage.getItem(storageKey);
+    if (existing) {
+      setSessionId(existing);
+      return;
+    }
+    const fallbackId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const nextId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : fallbackId;
+    window.localStorage.setItem(storageKey, nextId);
+    setSessionId(nextId);
+  }, []);
 
   const startNewChat = () => {
     setMessages([]);
     setHistoryId(null);
     setIsArchiveView(false);
     setErrorMessage(null);
+    setSuggestedChips([]);
+    setFlowState(null);
+    setConfirmOpen(false);
+    setPendingText(null);
   };
 
   const openHistory = (history: ChatHistory) => {
@@ -114,9 +194,17 @@ export function ChatPanel() {
     setHistoryId(history.id);
     setIsArchiveView(true);
     setErrorMessage(null);
+    setSuggestedChips([]);
+    setFlowState(normalizeFlowState(history.flow_state ?? null));
+    setConfirmOpen(false);
+    setPendingText(null);
   };
 
-  const persistChat = async (nextMessages: Message[]) => {
+  const persistChat = async (
+    nextMessages: Message[],
+    nextFlowState: Record<string, unknown> | null,
+    meta?: ChatMeta
+  ) => {
     if (!user) return;
     const lastMessageAt = new Date().toISOString();
     if (!historyId) {
@@ -126,11 +214,18 @@ export function ChatPanel() {
         .insert({
           user_id: user.id,
           section,
+          mode,
           messages: nextMessages,
           title,
           last_message_at: lastMessageAt,
+          flow_state: mode === "supplier_search" ? nextFlowState : null,
+          tool_calls: meta?.tool_calls ?? null,
+          entities: meta?.entities ?? null,
+          summary: meta?.summary ?? null,
         })
-        .select("id,title,messages,created_at,last_message_at")
+        .select(
+          "id,title,messages,created_at,last_message_at,mode,flow_state,tool_calls,entities,summary"
+        )
         .single();
       if (data?.id) {
         setHistoryId(data.id);
@@ -143,12 +238,27 @@ export function ChatPanel() {
     }
     await supabaseClient
       .from("chat_history")
-      .update({ messages: nextMessages, last_message_at: lastMessageAt })
+      .update({
+        messages: nextMessages,
+        last_message_at: lastMessageAt,
+        ...(mode === "supplier_search" ? { flow_state: nextFlowState } : {}),
+        tool_calls: meta?.tool_calls ?? null,
+        entities: meta?.entities ?? null,
+        summary: meta?.summary ?? null,
+      })
       .eq("id", historyId);
     setHistoryList((prev) => {
       const updated = prev.map((item) =>
         item.id === historyId
-          ? { ...item, messages: nextMessages, last_message_at: lastMessageAt }
+          ? {
+              ...item,
+              messages: nextMessages,
+              last_message_at: lastMessageAt,
+              flow_state: mode === "supplier_search" ? nextFlowState : item.flow_state,
+              tool_calls: meta?.tool_calls ?? item.tool_calls ?? null,
+              entities: meta?.entities ?? item.entities ?? null,
+              summary: meta?.summary ?? item.summary ?? null,
+            }
           : item
       );
       const current = updated.find((item) => item.id === historyId);
@@ -157,39 +267,115 @@ export function ChatPanel() {
     });
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || !isAuthenticated || isAuthLoading || isArchiveView) return;
-    const nextMessages = [...messages, { role: "user", content: input.trim() }];
+  const sendMessage = async (content: string) => {
+    if (!content.trim() || !isAuthenticated || isAuthLoading || isArchiveView) return;
+    const nextMessages: Message[] = [
+      ...messages,
+      { role: "user", content: content.trim() },
+    ];
     setMessages(nextMessages);
     setInput("");
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const response = await sendChatMessage(section, nextMessages);
-      if (response.ok && response.message) {
-        const updatedMessages = [
+      const response = await sendChatMessage({
+        pageContext: pathname,
+        messages: nextMessages,
+        sessionId: sessionId ?? undefined,
+        context: {
+          flow_state: flowState,
+          mode,
+        },
+      });
+      if (response.ok && (response.response || response.message)) {
+        const assistantText = response.response ?? response.message ?? "Нет ответа.";
+        const meta: ChatMeta = {
+          tool_calls: (response.tool_calls as Record<string, unknown>[] | undefined) ?? null,
+          entities: (response.entities as Record<string, unknown> | null | undefined) ?? null,
+          summary: response.summary ?? null,
+        };
+        const nextFlowState =
+          mode === "supplier_search"
+            ? {
+                step:
+                  (response.ui_hints as { progress_state?: string } | undefined)?.progress_state ??
+                  (flowState?.step as string | undefined) ??
+                  "discovery",
+                updated_at: new Date().toISOString(),
+              }
+            : null;
+        const updatedMessages: Message[] = [
           ...nextMessages,
-          { role: "assistant", content: response.message },
+          { role: "assistant", content: assistantText },
         ];
         setMessages(updatedMessages);
-        await persistChat(updatedMessages);
+        setFlowState(nextFlowState);
+        const redirectHint = (response.ui_hints as { redirect_to?: string } | undefined)?.redirect_to;
+        const chips = response.suggested_chips ?? [];
+        setSuggestedChips(
+          chips.length || !redirectHint
+            ? chips
+            : [
+                {
+                  id: "redirect-hint",
+                  label: "Открыть поиск поставщиков",
+                  action: "redirect",
+                  payload: redirectHint,
+                },
+              ]
+        );
+        await persistChat(updatedMessages, nextFlowState, meta);
       } else {
-        await persistChat(nextMessages);
+        await persistChat(nextMessages, flowState);
         setErrorMessage("Не удалось получить ответ от бота.");
+        setSuggestedChips([]);
       }
     } catch (error) {
       console.error(error);
       setErrorMessage("Сервис чата временно недоступен.");
-      await persistChat(nextMessages);
+      setSuggestedChips([]);
+      await persistChat(nextMessages, flowState);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSend = async () => {
+    if (!input.trim()) return;
+    const normalized = input.trim().toLowerCase();
+    if (mode === "supplier_search" && normalized.includes("запустить полный анализ")) {
+      setPendingText(input.trim());
+      setConfirmOpen(true);
+      return;
+    }
+    await sendMessage(input.trim());
   };
 
   const handleQuickInsert = (value: string) => {
     if (isArchiveView) return;
     setInput(value);
     inputRef.current?.focus();
+  };
+
+  const handleChipAction = (chip: {
+    action: "redirect" | "insert";
+    payload: string;
+  }) => {
+    if (chip.action === "insert") {
+      if (
+        mode === "supplier_search" &&
+        chip.payload.toLowerCase().includes("запустить полный анализ")
+      ) {
+        setPendingText(chip.payload);
+        setConfirmOpen(true);
+        return;
+      }
+      handleQuickInsert(chip.payload);
+      return;
+    }
+    if (chip.action === "redirect") {
+      router.push(chip.payload);
+    }
   };
 
   return (
@@ -209,7 +395,7 @@ export function ChatPanel() {
               <div className="font-bold text-sm text-white">AI-помощник TradeLab</div>
               <div className="text-xs text-emerald-400 flex items-center gap-1">
                 <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></div>
-                Онлайн · {section}
+                Онлайн · {modeLabel[mode] ?? mode}
               </div>
             </div>
           </div>
@@ -268,6 +454,20 @@ export function ChatPanel() {
             {errorMessage}
           </div>
         )}
+        {mode === "supplier_search" && (
+          <div className="rounded-2xl ui-glass-panel p-3 text-xs text-white/70">
+            <div className="text-[11px] font-semibold uppercase text-white/50 mb-2">
+              Supplier Search
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Статус: {String(flowState?.step ?? "ожидание")}</span>
+              <span className="text-white/40">Preview → Оплата → Результат</span>
+            </div>
+            <div className="mt-2 text-white/60">
+              {resolveSupplierStatus(String(flowState?.step ?? ""))}
+            </div>
+          </div>
+        )}
         {messages.length === 0 ? (
           <div className="rounded-2xl ui-glass-panel p-4 text-white/80">
             <div className="text-xs font-semibold uppercase text-white/50 mb-3">
@@ -287,18 +487,34 @@ export function ChatPanel() {
             </ul>
           </div>
         ) : (
-          messages.map((message, index) => (
-            <div
-              key={`${message.role}-${index}`}
-              className={`max-w-[85%] rounded-2xl px-3 py-2 ${
-                message.role === "user"
-                  ? "ml-auto bg-linear-to-r from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/20"
-                  : "ui-glass-panel text-white"
-              }`}
-            >
-              {message.content}
-            </div>
-          ))
+          <>
+            {messages.map((message, index) => (
+              <div
+                key={`${message.role}-${index}`}
+                className={`max-w-[85%] rounded-2xl px-3 py-2 ${
+                  message.role === "user"
+                    ? "ml-auto bg-linear-to-r from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/20"
+                    : "ui-glass-panel text-white"
+                }`}
+              >
+                {message.content}
+              </div>
+            ))}
+            {suggestedChips.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {suggestedChips.map((chip) => (
+                  <Button
+                    key={chip.id}
+                    variant="secondary"
+                    className="text-xs"
+                    onClick={() => handleChipAction(chip)}
+                  >
+                    {chip.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -338,6 +554,37 @@ export function ChatPanel() {
           </Button>
         </div>
       </div>
+      {confirmOpen && pendingText && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0f172a] p-6 text-white">
+            <div className="text-sm font-semibold">Подтвердить списание</div>
+            <p className="mt-2 text-sm text-white/70">
+              Полный анализ стоит 500 TC. Подтвердить запуск?
+            </p>
+            <div className="mt-4 flex gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setConfirmOpen(false);
+                  setPendingText(null);
+                }}
+              >
+                Отмена
+              </Button>
+              <Button
+                onClick={async () => {
+                  const text = pendingText;
+                  setConfirmOpen(false);
+                  setPendingText(null);
+                  await sendMessage(text);
+                }}
+              >
+                Подтвердить
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

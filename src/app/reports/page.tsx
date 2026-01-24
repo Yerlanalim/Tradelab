@@ -31,6 +31,7 @@ export default function ReportsPage() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadReports();
   }, []);
 
@@ -42,6 +43,12 @@ export default function ReportsPage() {
     ).length;
     return { total, ready, processing };
   }, [reports]);
+
+  const getExportPath = (report: Report) => {
+    const summary = report.resultSummary;
+    if (!summary || typeof summary !== "object") return null;
+    return (summary as { exportPath?: string }).exportPath ?? null;
+  };
 
   const handleSeed = async () => {
     if (!user) return;
@@ -121,11 +128,19 @@ export default function ReportsPage() {
             </div>
             <div className="mt-4">
               <Table
-                headers={["Отчет", "Статус", "PDF", "Дата", "Действие"]}
+                headers={["Отчет", "Статус", "PDF", "WEB", "CSV", "Дата", "Действие"]}
                 rows={reports.map((report) => [
                   report.title,
-                  report.status === "ready" ? "Готов" : "В процессе",
+                  report.status === "ready"
+                    ? "Готов"
+                    : report.status === "failed"
+                    ? "Ошибка"
+                    : report.status === "draft"
+                    ? "Черновик"
+                    : "В процессе",
                   report.pdfUrl ? "Есть" : "—",
+                  report.webReportUrl ? "Есть" : "—",
+                  getExportPath(report) ? "Есть" : "—",
                   report.createdAt,
                   <Link
                     key={report.id}

@@ -29,6 +29,7 @@ const navItems = [
   { href: "/zones", label: "Торговые зоны", icon: Building2 },
   { href: "/exhibitions", label: "Выставки", icon: Calendar },
   { href: "/reports", label: "Мои отчёты", icon: FileText },
+  { href: "/trade-credits", label: "Trade Credits", icon: Sparkles },
   { href: "/settings", label: "Настройки", icon: Settings },
 ];
 

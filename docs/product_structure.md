@@ -33,14 +33,13 @@
 - Upstash QStash (очереди/фоновая обработка, если нагрузка растет)
 
 ### Платежи
-- Stripe (USD)
-- Halyk ePay + Kaspi Pay (KZT)
+- Halyk ePay (KZT)
 
 ## 2) Архитектурные принципы
 
 1. Все данные в Supabase, минимальная загрузка на фронт.
 2. Edge Functions как единственная точка доступа к внешним API
-   (Tendata, QCC, Apify, платежи).
+   (Tendata, QCC, LLM web search, платежи).
 3. RLS-first: доступ к данным ограничен политиками в Postgres.
 4. Feature store вместо хранения сырых trade-записей.
 5. Контекстный AI-бот для каждого раздела.
@@ -57,7 +56,7 @@
 ### 3.2. Продукты (P1-P4)
 1. P1 — Проверка компании (QCC)
 2. P2 — Экспортный профиль (Tendata)
-3. P3 — Поиск поставщиков (Apify)
+3. P3 — Поиск поставщиков (LLM web search)
 4. P4 — Анализ рынка KZ (Tendata)
 
 Каждый продукт:
@@ -73,7 +72,7 @@
 - Бот оценки рисков сделки
 
 ### 3.4. AI-чат
-- Отдельный бот на каждой странице.
+- Единый бот с режимами (Assistant / Supplier Search / Report).
 - Таблица chat_history:
   - id, user_id, section, messages, created_at, updated_at
 - История доступна пользователю.
@@ -81,7 +80,7 @@
 ### 3.5. Data-layer (Supplier ID)
 - USCC = canonical ID.
 - Tendata match к USCC.
-- Apify match через ссылку и вероятностный матч.
+- Web search match через ссылку и вероятностный матч.
 - Храним признаки, а не сырые записи.
 
 ### 3.6. Отчеты и PDF
@@ -191,7 +190,7 @@
 ### supplier_matches
 - id
 - supplier_id
-- source (tendata|apify)
+- source (tendata|web_search)
 - source_ref
 - confidence
 - created_at
@@ -207,7 +206,7 @@
 ### payments
 - id
 - order_id
-- provider (stripe|halyk|kaspi)
+- provider (halyk)
 - status (pending|paid|failed|refunded)
 - amount
 - currency
@@ -216,7 +215,7 @@
 
 ### api_usage
 - id
-- provider (tendata|qcc|apify|openai)
+- provider (tendata|qcc|web_search|openai)
 - user_id
 - request_meta (jsonb)
 - cost_estimate
@@ -246,9 +245,9 @@
 - Поиск по USCC.
 - Получение регистрационных данных.
 
-### 6.4. apify_proxy
-- Запуск scrapers Alibaba/MIC.
-- Получение + нормализация результатов.
+### 6.4. chat_handler
+- Единая точка входа для чат-бота с режимами.
+- Определение mode по page_context и возврат ui_hints.
 
 ### 6.5. report_generator
 - Компоновка отчета.
@@ -281,7 +280,7 @@
 
 ### P3: Поиск поставщиков
 1. Пользователь описывает товар + HS.
-2. apify_proxy → список поставщиков.
+2. LLM web search → список поставщиков.
 3. Фильтрация + benchmark.
 4. Сохранение short list.
 
@@ -315,10 +314,7 @@
   - OPENAI_API_KEY
   - TENDATA_API_KEY
   - QCC_API_KEY
-  - APIFY_API_KEY
-  - STRIPE_SECRET
   - HALYK_API_KEY
-  - KASPI_API_KEY
 
 ## 10) Нефункциональные требования
 

@@ -1,12 +1,35 @@
 "use client";
 
-import { Bell, Command, Search } from "lucide-react";
-import { useState } from "react";
+import { Bell, Command, Search, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+
+import { fetchTcBalance } from "@/lib/api/tc";
 
 const languages = ["RU", "EN", "中文"];
 
 export function TopBar() {
   const [language, setLanguage] = useState("RU");
+  const [tcBalance, setTcBalance] = useState<number | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const load = async () => {
+      try {
+        const data = await fetchTcBalance();
+        if (isMounted) {
+          setTcBalance(data.balance_total);
+        }
+      } catch {
+        if (isMounted) {
+          setTcBalance(null);
+        }
+      }
+    };
+    load();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <div className="backdrop-blur-xl bg-white/5 border-b border-white/10 px-8 py-4">
@@ -27,6 +50,10 @@ export function TopBar() {
         </div>
 
         <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-white/70">
+            <Sparkles className="h-4 w-4 text-emerald-400" />
+            <span>{tcBalance !== null ? `${tcBalance} TC` : "TC —"}</span>
+          </div>
           <div className="flex items-center gap-1 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-1">
             {languages.map((lang) => (
               <button

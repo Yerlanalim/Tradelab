@@ -1,121 +1,53 @@
-# План работ: TradeLab (каркас веб‑приложения)
+# Plan 1 — Milestone 0: Unified Bot фундамент
+Дата: 23.01.2026
 
-Цель: быстро создать стабильный каркас (UI + структура + страницы),
-без интеграции доменов и внешних API.
+## Этап 0 — Подготовка и правила
+- [ ] Утвердить режимы бота: Assistant / Supplier Search / Report
+- [ ] Утвердить матрицу страниц → режим
+- [ ] Зафиксировать минимальный UI-контракт ответа (`response`, `suggested_chips`, `ui_hints`, `tool_calls`)
+- [ ] Определить политику хранения `session_id` (cookie / localStorage / DB)
 
-## Этап 1. Каркас проекта (MVP skeleton)
-Статус: done
+## Этап 1 — Legacy cleanup (обязательно)
+- [x] Удалить Supabase Edge Function `apify_proxy`
+- [x] Удалить `APIFY_TOKEN` и связанные env переменные
+- [x] Удалить `src/lib/api/apify.ts`
+- [x] Удалить/заменить `src/components/products/Product3Search.tsx`
+- [x] Убрать все упоминания legacy scrapers из UI/доков
+- [x] Зафиксировать политику по `supplier_*` (feature store остаётся, источник legacy запрещён)
 
-- [x] Инициализация Next.js (App Router, TypeScript, Tailwind)
-- [x] Базовая структура каталогов (`app`, `components`, `lib`, `supabase`)
-- [x] Layout (Sidebar + Main + Chat) + глобальные стили
-- [x] Страницы‑заглушки под все разделы
-- [x] Базовые UI компоненты (button, card, table)
-- [x] Общий набор зависимостей (forms, query, icons)
+## Этап 2 — Единая Edge Function `chat_handler`
+- [x] Создать функцию `chat_handler` как единую точку входа
+- [x] Принимать `messages`, `page_context`, `session_id` (+ user token)
+- [x] Определять `mode` серверно по `page_context`
+- [x] Возвращать `response`, `suggested_chips`, `ui_hints`, `tool_calls`
+- [x] Запретить "опасные" tool calls вне нужного режима (anti-bypass)
+- [x] Логировать запросы/ответы в `api_usage` (provider = openai)
 
-## Этап 2. UX‑каркас продуктов
-Статус: done
+## Этап 3 — Хранилище чата и flow_state
+- [x] Добавить в `chat_history` поля `mode` и `flow_state` (jsonb)
+- [x] Миграция legacy записей: `section → mode`
+- [x] Определить схему `flow_state` для Supplier Search (step/status/preview/confirmed)
+- [x] Ввести TTL/cleanup для устаревших flow_state (если нужно)
 
-- [x] Conversational form (UI‑шаблон, без логики)
-- [x] Страницы продуктов P1–P4
-- [x] Страницы Reports (list + detail)
-- [x] Заглушка AI‑чата (UI)
+## Этап 4 — UI: единый чат и режимы
+- [x] Перевести `ChatPanel` на новый endpoint `chat_handler`
+- [x] Передавать `page_context` и `session_id`
+- [x] Реализовать обработку `suggested_chips`
+- [x] Реализовать `ui_hints` (redirect_to / show_paywall / progress_state)
+- [x] Assistant mode: при запросе поиска показывать чип → `/products/supplier-search`
+- [x] Supplier Search mode: special UI (preview/paywall/progress/result)
+- [x] Report mode: интерпретация отчёта + апсейл
 
-## Этап 3. Auth scaffold и state
-Статус: done
+## Этап 5 — Тесты и приемка
+- [x] Smoke тесты для трёх режимов (Assistant/Supplier Search/Report)
+- [x] Проверка, что поиск поставщиков не запускается вне `/products/supplier-search`
+- [x] Проверка сохранения истории чата и восстановления flow_state
+- [x] Проверка запрета tool calls вне режима
+- [x] Зафиксировать чек-лист DoD для Milestone 0
 
-- [x] Страницы auth (login/register/reset)
-- [x] Мок‑состояние пользователя
-- [x] Блокировка приватных страниц (UI)
-
-## Этап 4. Подготовка к Supabase
-Статус: done
-
-- [x] Типы данных (Order, Report, Supplier)
-- [x] Мок‑API в `lib/api`
-- [x] Провайдеры (QueryClient)
-
-## Этап 5. Полировка и готовность к интеграции
-Статус: done
-
-- [x] Контентные разделы (map/library/zones/exhibitions)
-- [x] Единые элементы навигации
-- [x] Документация `docs/setup.md`
-
-## Этап 6. Supabase integration scaffold
-Статус: done
-
-- [x] Установить `@supabase/supabase-js`
-- [x] Добавить `supabaseClient` (browser/server)
-- [x] Подготовить auth service wrapper (без реальной логики)
-- [x] Обновить `docs/setup.md` с env переменными Supabase
-
-## Этап 7. Supabase Auth integration (базовый)
-Статус: done
-
-- [x] Auth provider с Supabase session
-- [x] Реальный AuthGate вместо mock
-- [x] Login/Register/Reset формы с Supabase
-- [x] Обновить `.env` под публичные ключи
-
-## Этап 8. База данных и RLS (Supabase)
-Статус: done
-
-- [x] Создать базовые таблицы (orders, reports, profiles, content и т.д.)
-- [x] Включить RLS и политики для user-таблиц
-
-## Этап 9. Контент из Supabase
-Статус: done
-
-- [x] Засеять `content_items`
-- [x] Подключить контентные страницы к Supabase
-
-## Этап 10. Заказы и отчёты из Supabase
-Статус: done
-
-- [x] Перевести reports/orders на реальные таблицы
-- [x] Подключить RLS‑чтение по user_id
-- [x] Базовый seed/demo для отчетов
-
-## Этап 11. Edge Functions (P1–P4)
-Статус: done
-
-- [x] `qcc_proxy` (P1)
-- [x] `tendata_proxy` (P2, P4)
-- [x] `apify_proxy` (P3)
-- [x] `report_generator`
-
-## Этап 12. Генерация PDF и Storage
-Статус: done
-
-- [x] Storage buckets: reports/exports/assets
-- [x] Генерация PDF (React‑PDF или server) — placeholder
-- [x] Ссылки на PDF в reports — placeholder
-
-## Этап 13. AI orchestration
-Статус: done
-
-- [x] `ai_orchestrator` (prompts per section)
-- [x] HS‑match, релевантность, интерпретация — placeholder
-- [x] Логи/лимиты через `api_usage` — placeholder
-
-## Этап 14. Payments
-Статус: pending
-
-- [ ] Stripe интеграция
-- [ ] Halyk ePay / Kaspi Pay
-- [ ] `payment_webhook` и статус заказов
-
-## Этап 15. Наблюдаемость и качество
-Статус: done
-
-- [x] Sentry + базовые алерты
-- [x] Минимальные e2e checks — checklist
-- [x] Проверка RLS и security review — checklist
-
-## Этап 16. Deploy
-Статус: done
-
-- [x] Vercel production + preview — doc
-- [x] Проверка env vars — doc
-- [x] Smoke‑тесты на prod — checklist
+## DoD — Milestone 0
+- [x] Один чат на всех страницах, режим определяется серверно
+- [x] `chat_handler` отвечает `response` + `suggested_chips` + `ui_hints`
+- [x] История чатов хранится по `mode`, flow_state сохраняется
+- [x] Assistant не запускает поиск, а направляет в `/products/supplier-search`
+- [x] Legacy scrapers полностью отключены в коде и UI

@@ -23,12 +23,14 @@ export type Report = {
   summary: string;
   createdAt: string;
   pdfUrl?: string;
+  webReportUrl?: string;
+  resultSummary?: Record<string, unknown>;
 };
 
 export type Supplier = {
   id: string;
   name: string;
   country: string;
-  source: "qcc" | "tendata" | "apify";
+  source: "qcc" | "tendata" | "web_search";
   score?: number;
 };

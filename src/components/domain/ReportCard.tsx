@@ -4,7 +4,7 @@ import { RiskBadge } from "@/components/domain/RiskBadge";
 
 type ReportCardProps = {
   title: string;
-  status: "ready" | "processing";
+  status: "ready" | "processing" | "failed" | "draft";
   createdAt: string;
   href: string;
   pdfAvailable?: boolean;
@@ -17,8 +17,22 @@ export function ReportCard({
   href,
   pdfAvailable,
 }: ReportCardProps) {
-  const badge = status === "ready" ? "Готов" : "В процессе";
-  const tone = status === "ready" ? "success" : "warning";
+  const badge =
+    status === "ready"
+      ? "Готов"
+      : status === "failed"
+      ? "Ошибка"
+      : status === "draft"
+      ? "Черновик"
+      : "В процессе";
+  const tone =
+    status === "ready"
+      ? "success"
+      : status === "failed"
+      ? "error"
+      : status === "draft"
+      ? "neutral"
+      : "warning";
 
   return (
     <div className="ui-glass rounded-2xl p-4 text-sm text-white/80">

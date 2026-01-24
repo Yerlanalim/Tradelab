@@ -80,9 +80,7 @@ const buildDocument = ({
       )}
 
       <Text style={styles.sectionTitle}>Источник</Text>
-      <Text style={styles.paragraph}>
-        {source ?? "TradeLab (демо-данные)"}
-      </Text>
+      <Text style={styles.paragraph}>{source ?? "TradeLab (демо-данные)"}</Text>
 
       <Text style={styles.sectionTitle}>Ограничение</Text>
       <Text style={styles.paragraph}>

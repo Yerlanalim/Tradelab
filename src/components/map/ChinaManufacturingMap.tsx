@@ -434,7 +434,6 @@ export default function ChinaManufacturingMap({
               selectedProvince={selectedProvince}
               provinceCities={provinceCities}
               onCityClick={handleCityClick}
-              onClose={closeInfoPanel}
             />
           </div>
         </div>
@@ -462,8 +461,6 @@ export default function ChinaManufacturingMap({
                 selectedProvince={selectedProvince}
                 provinceCities={provinceCities}
                 onCityClick={handleCityClick}
-                onClose={closeInfoPanel}
-                isMobile
               />
             </div>
           </div>
@@ -492,8 +489,6 @@ type InfoPanelProps = {
   selectedProvince: Province | null;
   provinceCities: City[];
   onCityClick: (city: City) => void;
-  onClose: () => void;
-  isMobile?: boolean;
 };
 
 function InfoPanel({
@@ -501,8 +496,6 @@ function InfoPanel({
   selectedProvince,
   provinceCities,
   onCityClick,
-  onClose,
-  isMobile = false,
 }: InfoPanelProps) {
   if (selectedCity) {
     return (
