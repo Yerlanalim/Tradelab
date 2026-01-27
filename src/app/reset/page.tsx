@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -10,13 +10,42 @@ import { requestPasswordReset } from "@/lib/auth/authService";
 export default function ResetPage() {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+  const [cooldownLeft, setCooldownLeft] = useState(0);
+
+  useEffect(() => {
+    if (!cooldownUntil) return;
+    const interval = window.setInterval(() => {
+      const leftMs = Math.max(0, cooldownUntil - Date.now());
+      setCooldownLeft(Math.ceil(leftMs / 1000));
+      if (leftMs <= 0) {
+        window.clearInterval(interval);
+      }
+    }, 500);
+    return () => window.clearInterval(interval);
+  }, [cooldownUntil]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage(null);
-    const result = await requestPasswordReset(email);
+    setIsSuccess(false);
+    if (cooldownLeft > 0) {
+      setMessage(`Подождите ${cooldownLeft} сек перед повторной попыткой.`);
+      return;
+    }
+    setIsSubmitting(true);
+    const redirectTo =
+      typeof window !== "undefined" ? `${window.location.origin}/reset/confirm` : undefined;
+    const result = await requestPasswordReset(email, redirectTo);
+    setIsSubmitting(false);
+    setCooldownUntil(Date.now() + 4000);
+    setIsSuccess(result.ok);
     setMessage(
-      result.ok ? "Ссылка отправлена на email." : result.error ?? "Ошибка."
+      result.ok
+        ? "Ссылка отправлена. Проверьте почту и папку «Спам»."
+        : result.error ?? "Ошибка."
     );
   };
 
@@ -37,11 +66,16 @@ export default function ResetPage() {
               required
             />
           </label>
-          <Button className="w-full" type="submit">
-            Отправить ссылку
+          <Button className="w-full" type="submit" disabled={isSubmitting || cooldownLeft > 0}>
+            {isSubmitting ? "Отправляем..." : "Отправить ссылку"}
           </Button>
           {message && (
             <div className="text-xs text-white/60">{message}</div>
+          )}
+          {isSuccess && (
+            <div className="text-[11px] text-white/50">
+              Если письма нет 2–3 минуты, проверьте «Спам» или отправьте повторно.
+            </div>
           )}
           <div className="text-center text-xs">
             <Link className="underline text-white/60" href="/login">

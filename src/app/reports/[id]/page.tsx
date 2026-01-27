@@ -32,7 +32,8 @@ type P3ResultSummary = {
     moqRange?: string;
   };
   items?: SupplierSummaryItem[];
-  exportPath?: string;
+  exportCsvPath?: string;
+  exportXlsxPath?: string;
 };
 
 export default function ReportDetailsPage() {
@@ -40,8 +41,11 @@ export default function ReportDetailsPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [exportUrl, setExportUrl] = useState<string | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
+  const [csvUrl, setCsvUrl] = useState<string | null>(null);
+  const [xlsxUrl, setXlsxUrl] = useState<string | null>(null);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [isExportingXlsx, setIsExportingXlsx] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const p3Summary =
     report?.productType === "p3"
@@ -82,33 +86,73 @@ export default function ReportDetailsPage() {
 
   useEffect(() => {
     const loadExportUrl = async () => {
-      if (!p3Summary?.exportPath) {
-        setExportUrl(null);
+      if (!p3Summary?.exportCsvPath) {
+        setCsvUrl(null);
         return;
       }
       const { data } = await supabaseClient.storage
         .from("exports")
-        .createSignedUrl(p3Summary.exportPath, 60 * 60);
-      setExportUrl(data?.signedUrl ?? null);
+        .createSignedUrl(p3Summary.exportCsvPath, 60 * 60);
+      setCsvUrl(data?.signedUrl ?? null);
     };
     loadExportUrl();
-  }, [p3Summary?.exportPath]);
+  }, [p3Summary?.exportCsvPath]);
 
-  const handleExport = async () => {
+  useEffect(() => {
+    const loadExportUrl = async () => {
+      if (!p3Summary?.exportXlsxPath) {
+        setXlsxUrl(null);
+        return;
+      }
+      const { data } = await supabaseClient.storage
+        .from("exports")
+        .createSignedUrl(p3Summary.exportXlsxPath, 60 * 60);
+      setXlsxUrl(data?.signedUrl ?? null);
+    };
+    loadExportUrl();
+  }, [p3Summary?.exportXlsxPath]);
+
+  const getExportAuth = async () => {
+    const { data: refreshed, error } = await supabaseClient.auth.refreshSession();
+    if (!error && refreshed.session?.access_token) {
+      return {
+        accessToken: refreshed.session.access_token,
+        refreshToken: refreshed.session.refresh_token ?? null,
+      };
+    }
+    const { data: sessionData } = await supabaseClient.auth.getSession();
+    return {
+      accessToken: sessionData.session?.access_token ?? null,
+      refreshToken: sessionData.session?.refresh_token ?? null,
+    };
+  };
+
+  const handleExportCsv = async () => {
     if (!report?.id) return;
-    setIsExporting(true);
+    setIsExportingCsv(true);
+    setExportError(null);
     try {
-      const { data: sessionData } = await supabaseClient.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) return;
+      const auth = await getExportAuth();
+      if (!auth.accessToken) {
+        setExportError("Сессия истекла. Войдите заново и повторите экспорт.");
+        return;
+      }
       const response = await fetch("/api/reports/export", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${auth.accessToken}`,
         },
-        body: JSON.stringify({ reportId: report.id }),
+        body: JSON.stringify({
+          reportId: report.id,
+          accessToken: auth.accessToken,
+          refreshToken: auth.refreshToken,
+        }),
       });
+      if (response.status === 401) {
+        setExportError("Сессия истекла. Войдите заново и повторите экспорт.");
+        return;
+      }
       const data = await response.json();
       if (response.ok && data.ok && data.exportPath) {
         setReport((prev) =>
@@ -117,14 +161,59 @@ export default function ReportDetailsPage() {
                 ...prev,
                 resultSummary: {
                   ...(p3Summary ?? {}),
-                  exportPath: data.exportPath,
+                  exportCsvPath: data.exportPath,
                 },
               }
             : prev
         );
       }
     } finally {
-      setIsExporting(false);
+      setIsExportingCsv(false);
+    }
+  };
+
+  const handleExportXlsx = async () => {
+    if (!report?.id) return;
+    setIsExportingXlsx(true);
+    setExportError(null);
+    try {
+      const auth = await getExportAuth();
+      if (!auth.accessToken) {
+        setExportError("Сессия истекла. Войдите заново и повторите экспорт.");
+        return;
+      }
+      const response = await fetch("/api/reports/export-xlsx", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${auth.accessToken}`,
+        },
+        body: JSON.stringify({
+          reportId: report.id,
+          accessToken: auth.accessToken,
+          refreshToken: auth.refreshToken,
+        }),
+      });
+      if (response.status === 401) {
+        setExportError("Сессия истекла. Войдите заново и повторите экспорт.");
+        return;
+      }
+      const data = await response.json();
+      if (response.ok && data.ok && data.exportPath) {
+        setReport((prev) =>
+          prev
+            ? {
+                ...prev,
+                resultSummary: {
+                  ...(p3Summary ?? {}),
+                  exportXlsxPath: data.exportPath,
+                },
+              }
+            : prev
+        );
+      }
+    } finally {
+      setIsExportingXlsx(false);
     }
   };
 
@@ -170,22 +259,41 @@ export default function ReportDetailsPage() {
                 </Button>
               )}
               {report?.productType === "p3" && (
-                exportUrl ? (
-                  <a
-                    className="inline-flex"
-                    href={exportUrl}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    <Button variant="secondary">Скачать CSV</Button>
-                  </a>
-                ) : (
-                  <Button variant="secondary" onClick={handleExport} disabled={isExporting}>
-                    {isExporting ? "Генерация..." : "Сформировать CSV"}
-                  </Button>
-                )
+                <>
+                  {csvUrl ? (
+                    <a className="inline-flex" href={csvUrl} rel="noreferrer" target="_blank">
+                      <Button variant="secondary">Скачать CSV</Button>
+                    </a>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      onClick={handleExportCsv}
+                      disabled={isExportingCsv}
+                    >
+                      {isExportingCsv ? "Генерация CSV..." : "Сформировать CSV"}
+                    </Button>
+                  )}
+                  {xlsxUrl ? (
+                    <a className="inline-flex" href={xlsxUrl} rel="noreferrer" target="_blank">
+                      <Button variant="secondary">Скачать XLSX</Button>
+                    </a>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      onClick={handleExportXlsx}
+                      disabled={isExportingXlsx}
+                    >
+                      {isExportingXlsx ? "Генерация XLSX..." : "Сформировать XLSX"}
+                    </Button>
+                  )}
+                </>
               )}
             </div>
+            {exportError && (
+              <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-2 text-xs text-red-100">
+                {exportError}
+              </div>
+            )}
           </div>
         </Card>
         <Card title="Действия" description="Навигация">

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { Card } from "@/components/ui/Card";
 import { Section } from "@/components/layout/Section";
 import { Button } from "@/components/ui/Button";
 import { grantTcBonus } from "@/lib/api/tc";
+import { dispatchTcBalanceUpdate } from "@/lib/events/tcBalance";
 import { supabaseClient } from "@/lib/supabase/client";
 
 export default function AdminTradeCreditsPage() {
@@ -20,30 +21,40 @@ export default function AdminTradeCreditsPage() {
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
 
-  const adminEmails = useMemo(() => {
-    const raw = process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "";
-    return raw
-      .split(",")
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean);
-  }, []);
-
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabaseClient.auth.getUser();
-      const email = (data.user?.email ?? "").toLowerCase();
-      if (!adminEmails.length) {
+      const { data } = await supabaseClient.auth.getSession();
+      const token = data.session?.access_token ?? null;
+      if (!token) {
         setIsAllowed(false);
-        setMessage("ADMIN_EMAILS не настроен.");
+        setMessage("Требуется вход в аккаунт.");
         return;
       }
-      setIsAllowed(adminEmails.includes(email));
-      if (!adminEmails.includes(email)) {
-        setMessage("Доступ запрещен.");
+      try {
+        const response = await fetch("/api/admin/access", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = (await response.json()) as {
+          ok: boolean;
+          is_admin?: boolean;
+          message?: string;
+        };
+        if (!response.ok || !payload.ok) {
+          setIsAllowed(false);
+          setMessage(payload.message ?? "Доступ запрещен.");
+          return;
+        }
+        setIsAllowed(Boolean(payload.is_admin));
+        if (!payload.is_admin) {
+          setMessage("Доступ запрещен.");
+        }
+      } catch (error) {
+        setIsAllowed(false);
+        setMessage(error instanceof Error ? error.message : "Ошибка проверки доступа.");
       }
     };
     load();
-  }, [adminEmails]);
+  }, []);
 
   if (isAllowed === false) {
     return (
@@ -51,6 +62,17 @@ export default function AdminTradeCreditsPage() {
         <Section title="Доступ" description="Требуются права admin.">
           <Card title="Нет доступа" description="Свяжитесь с администратором.">
             <div className="text-sm text-white/70">{message ?? "Доступ запрещен."}</div>
+          </Card>
+        </Section>
+      </AppShell>
+    );
+  }
+  if (isAllowed === null) {
+    return (
+      <AppShell title="Admin: Trade Credits" description="Проверка доступа.">
+        <Section title="Проверка" description="Загружаем данные пользователя.">
+          <Card title="Пожалуйста, подождите" description="Проверяем права доступа.">
+            <div className="text-sm text-white/70">Загрузка...</div>
           </Card>
         </Section>
       </AppShell>
@@ -82,6 +104,7 @@ export default function AdminTradeCreditsPage() {
       if (response.ok) {
         setStatus("success");
         setMessage(`Готово. Баланс: ${response.balance_total ?? "—"} TC`);
+        dispatchTcBalanceUpdate();
       } else {
         setStatus("error");
         setMessage(response.message ?? "Не удалось выдать бонус.");

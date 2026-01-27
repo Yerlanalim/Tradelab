@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+import { generateReportPdf } from "@/lib/pdf/reportPdf";
+
 export const runtime = "nodejs";
 
 type ExportReportRequest = {
@@ -9,47 +11,25 @@ type ExportReportRequest = {
   refreshToken?: string;
 };
 
-type SupplierSummaryItem = {
-  source?: string;
-  title?: string;
-  price?: string;
-  moq?: string;
-  location?: string;
-  url?: string;
-};
-
 type P3ResultSummary = {
-  items?: SupplierSummaryItem[];
-  exportCsvPath?: string;
-  exportXlsxPath?: string;
-};
-
-const buildCsv = (items: SupplierSummaryItem[]) => {
-  const header = ["source", "title", "price", "moq", "location", "url"];
-  const rows = items.map((item) => [
-    item.source ?? "",
-    item.title ?? "",
-    item.price ?? "",
-    item.moq ?? "",
-    item.location ?? "",
-    item.url ?? "",
-  ]);
-  const escapeValue = (value: string) => {
-    const normalized = value.replace(/"/g, '""');
-    return `"${normalized}"`;
+  query?: string;
+  bench?: {
+    priceRange?: string;
+    moqRange?: string;
   };
-  return [header, ...rows]
-    .map((row) => row.map((value) => escapeValue(String(value))).join(","))
-    .join("\n");
+  source?: string;
+  limitation?: string;
+  stats?: {
+    totalFound?: number;
+    dedupedCount?: number;
+    finalCount?: number;
+  };
 };
 
 export async function POST(request: Request) {
   const payload = (await request.json()) as ExportReportRequest;
   if (!payload?.reportId) {
-    return NextResponse.json(
-      { ok: false, message: "reportId required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ ok: false, message: "reportId required" }, { status: 400 });
   }
 
   const supabaseUrl = process.env.SUPABASE_URL ?? "";
@@ -77,13 +57,15 @@ export async function POST(request: Request) {
   const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
   const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(token);
 
-  let reportRow: { id: string; user_id: string; result_summary: unknown } | null = null;
+  let reportRow:
+    | { id: string; user_id: string; order_id: string | null; title: string | null; result_summary: unknown }
+    | null = null;
   let ownerId = userData.user?.id ?? null;
 
   if (!userError && ownerId) {
     const { data } = await supabaseAdmin
       .from("reports")
-      .select("id,user_id,result_summary")
+      .select("id,user_id,order_id,title,result_summary")
       .eq("id", payload.reportId)
       .single();
     reportRow = (data as typeof reportRow) ?? null;
@@ -101,7 +83,7 @@ export async function POST(request: Request) {
     });
     const { data, error } = await supabaseUser
       .from("reports")
-      .select("id,user_id,result_summary")
+      .select("id,user_id,order_id,title,result_summary")
       .eq("id", payload.reportId)
       .single();
     if (!error && data) {
@@ -121,7 +103,7 @@ export async function POST(request: Request) {
       ownerId = refreshedUser.id;
       const { data: refreshedReport } = await supabaseAdmin
         .from("reports")
-        .select("id,user_id,result_summary")
+        .select("id,user_id,order_id,title,result_summary")
         .eq("id", payload.reportId)
         .single();
       reportRow = (refreshedReport as typeof reportRow) ?? null;
@@ -134,49 +116,58 @@ export async function POST(request: Request) {
   }
 
   if (!reportRow || !ownerId || reportRow.user_id !== ownerId) {
-    return NextResponse.json(
-      { ok: false, message: "Access denied for report" },
-      { status: 403 }
-    );
+    return NextResponse.json({ ok: false, message: "Access denied for report" }, { status: 403 });
   }
 
   const summary = reportRow.result_summary as P3ResultSummary | null;
-  const items = summary?.items ?? [];
-  if (!items.length) {
-    return NextResponse.json(
-      { ok: false, message: "No items to export" },
-      { status: 400 }
-    );
+  let jobId: string | null = null;
+  if (reportRow.order_id) {
+    const { data: job } = await supabaseAdmin
+      .from("report_jobs")
+      .insert({ order_id: reportRow.order_id, status: "running" })
+      .select("id")
+      .single();
+    jobId = job?.id ?? null;
   }
+  const meta: Record<string, string> = {
+    "Цена (бенчмарк)": summary?.bench?.priceRange ?? "н/д",
+    "MOQ (бенчмарк)": summary?.bench?.moqRange ?? "н/д",
+  };
+  if (summary?.stats) {
+    meta["Проанализировано"] = summary.stats.totalFound?.toString() ?? "н/д";
+    meta["После дедупа"] = summary.stats.dedupedCount?.toString() ?? "н/д";
+    meta["В отчёте"] = summary.stats.finalCount?.toString() ?? "н/д";
+  }
+  const buffer = await generateReportPdf({
+    reportId: reportRow.id,
+    title: reportRow.title ?? "Отчет TradeLab",
+    summary: summary?.query ?? undefined,
+    meta,
+    source: summary?.source ?? "LLM web search",
+    limitation: summary?.limitation ?? undefined,
+  });
 
-  const csv = buildCsv(items);
-  const exportPath = `${ownerId}/${payload.reportId}.csv`;
-  const { error: uploadError } = await supabaseAdmin.storage
-    .from("exports")
-    .upload(exportPath, csv, {
-      contentType: "text/csv",
-      upsert: true,
-    });
+  const pdfPath = `${ownerId}/${payload.reportId}.pdf`;
+  const { error: uploadError } = await supabaseAdmin.storage.from("reports").upload(pdfPath, buffer, {
+    contentType: "application/pdf",
+    upsert: true,
+  });
 
   if (uploadError) {
-    return NextResponse.json(
-      { ok: false, message: uploadError.message },
-      { status: 500 }
-    );
+    if (jobId) {
+      await supabaseAdmin.from("report_jobs").update({ status: "failed" }).eq("id", jobId);
+    }
+    return NextResponse.json({ ok: false, message: uploadError.message }, { status: 500 });
   }
 
   await supabaseAdmin
     .from("reports")
-    .update({
-      result_summary: { ...(summary ?? {}), exportCsvPath: exportPath },
-    })
+    .update({ pdf_url: pdfPath })
     .eq("id", payload.reportId);
 
-  await supabaseAdmin.from("p3_events").insert({
-    user_id: ownerId,
-    event_type: "export_csv",
-    event_meta: { report_id: payload.reportId },
-  });
+  if (jobId) {
+    await supabaseAdmin.from("report_jobs").update({ status: "done" }).eq("id", jobId);
+  }
 
-  return NextResponse.json({ ok: true, exportPath });
+  return NextResponse.json({ ok: true, pdfPath, jobId });
 }

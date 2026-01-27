@@ -28,10 +28,12 @@ export default function TradeCreditsPage() {
     }[]
   >([]);
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
       setStatus("loading");
+      setErrorMessage(null);
       try {
         const [balanceData, ledgerData] = await Promise.all([
           fetchTcBalance(),
@@ -40,7 +42,8 @@ export default function TradeCreditsPage() {
         setBalance(balanceData);
         setLedger(ledgerData);
         setStatus("idle");
-      } catch {
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Неизвестная ошибка.");
         setStatus("error");
       }
     };
@@ -85,7 +88,10 @@ export default function TradeCreditsPage() {
         {status === "loading" ? (
           <div className="text-sm text-white/60">Загрузка...</div>
         ) : status === "error" ? (
-          <div className="text-sm text-white/60">Не удалось загрузить историю.</div>
+          <div className="text-sm text-white/60">
+            Не удалось загрузить историю.
+            {errorMessage ? ` (${errorMessage})` : ""}
+          </div>
         ) : ledger.length ? (
           <Table
             headers={["Тип", "Сумма", "Источник", "Причина", "Дата"]}

@@ -13,6 +13,7 @@ type AppShellProps = {
   actions?: ReactNode;
   children: ReactNode;
   requireAuth?: boolean;
+  chatVariant?: "sidebar" | "hidden";
 };
 
 export function AppShell({
@@ -21,10 +22,13 @@ export function AppShell({
   actions,
   children,
   requireAuth = true,
+  chatVariant = "sidebar",
 }: AppShellProps) {
+  const gridTemplate =
+    chatVariant === "hidden" ? "lg:grid-cols-[260px_1fr]" : "lg:grid-cols-[260px_1fr_320px]";
   return (
     <div className="min-h-screen bg-[var(--tl-bg-0)] text-[var(--tl-text-inverse)]">
-      <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[260px_1fr_320px]">
+      <div className={`grid min-h-screen grid-cols-1 ${gridTemplate}`}>
         <Sidebar />
         <main className="border-x border-[var(--tl-border-strong)] bg-[var(--tl-bg-1)] text-[var(--tl-text-inverse)]">
           <TopBar />
@@ -43,7 +47,7 @@ export function AppShell({
             {requireAuth ? <AuthGate>{children}</AuthGate> : children}
           </div>
         </main>
-        <ChatPanel />
+        {chatVariant === "sidebar" ? <ChatPanel variant="sidebar" /> : null}
       </div>
     </div>
   );

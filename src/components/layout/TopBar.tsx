@@ -4,6 +4,7 @@ import { Bell, Command, Search, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { fetchTcBalance } from "@/lib/api/tc";
+import { onTcBalanceUpdate } from "@/lib/events/tcBalance";
 
 const languages = ["RU", "EN", "中文"];
 
@@ -26,8 +27,19 @@ export function TopBar() {
       }
     };
     load();
+    const unsubscribe = onTcBalanceUpdate(load);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        load();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    const interval = window.setInterval(load, 60000);
     return () => {
       isMounted = false;
+      unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.clearInterval(interval);
     };
   }, []);
 

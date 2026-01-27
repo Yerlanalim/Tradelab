@@ -19,24 +19,51 @@ export type TcLedgerRow = {
   created_at: string;
 };
 
-export async function fetchTcBalance(): Promise<TcBalance> {
+const emptyBalance: TcBalance = {
+  balance_total: 0,
+  balance_purchased: 0,
+  balance_bonus: 0,
+  balance_promo: 0,
+  balance_welcome: 0,
+  next_expiry: null,
+};
+
+const getCurrentUserId = async () => {
+  const { data: sessionData } = await supabaseClient.auth.getSession();
+  const sessionUserId = sessionData.session?.user?.id ?? null;
+  if (sessionUserId) return sessionUserId;
   const { data: userData } = await supabaseClient.auth.getUser();
-  const userId = userData.user?.id;
+  return userData.user?.id ?? null;
+};
+
+export async function fetchTcBalance(): Promise<TcBalance> {
+  const userId = await getCurrentUserId();
   if (!userId) {
-    return {
-      balance_total: 0,
-      balance_purchased: 0,
-      balance_bonus: 0,
-      balance_promo: 0,
-      balance_welcome: 0,
-      next_expiry: null,
-    };
+    return emptyBalance;
   }
   const { data, error } = await supabaseClient.rpc("tc_get_balance", {
     p_user_id: userId,
   });
   if (error) {
-    throw new Error(error.message);
+    const fallback = await supabaseClient
+      .from("tc_balances")
+      .select(
+        "balance_total,balance_purchased,balance_bonus,balance_promo,balance_welcome,next_expiry"
+      )
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (fallback.error) {
+      throw new Error(`${error.message}; fallback: ${fallback.error.message}`);
+    }
+    const row = fallback.data ?? null;
+    return {
+      balance_total: Number(row?.balance_total ?? 0),
+      balance_purchased: Number(row?.balance_purchased ?? 0),
+      balance_bonus: Number(row?.balance_bonus ?? 0),
+      balance_promo: Number(row?.balance_promo ?? 0),
+      balance_welcome: Number(row?.balance_welcome ?? 0),
+      next_expiry: row?.next_expiry ?? null,
+    };
   }
   const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
   return {
@@ -50,6 +77,8 @@ export async function fetchTcBalance(): Promise<TcBalance> {
 }
 
 export async function fetchTcLedger(limit = 50): Promise<TcLedgerRow[]> {
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
   const { data, error } = await supabaseClient
     .from("tc_ledger")
     .select("id,tx_type,amount,credit_type,reason,ref_id,created_at")

@@ -5,18 +5,16 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { signUpWithEmail } from "@/lib/auth/authService";
+import { supabaseClient } from "@/lib/supabase/client";
 import { getPasswordIssues, isPasswordValid } from "@/lib/auth/passwordPolicy";
 
-export default function RegisterPage() {
-  const [email, setEmail] = useState("");
+export default function ResetConfirmPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
-  const [cooldownLeft, setCooldownLeft] = useState(0);
+  const [hasSession, setHasSession] = useState<boolean | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const passwordIssues = useMemo(() => getPasswordIssues(password), [password]);
@@ -24,16 +22,17 @@ export default function RegisterPage() {
     confirmPassword.length > 0 && password.trim() !== confirmPassword.trim();
 
   useEffect(() => {
-    if (!cooldownUntil) return;
-    const interval = window.setInterval(() => {
-      const leftMs = Math.max(0, cooldownUntil - Date.now());
-      setCooldownLeft(Math.ceil(leftMs / 1000));
-      if (leftMs <= 0) {
-        window.clearInterval(interval);
-      }
-    }, 500);
-    return () => window.clearInterval(interval);
-  }, [cooldownUntil]);
+    let isMounted = true;
+    const loadSession = async () => {
+      const { data } = await supabaseClient.auth.getSession();
+      if (!isMounted) return;
+      setHasSession(Boolean(data.session));
+    };
+    loadSession();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -47,41 +46,50 @@ export default function RegisterPage() {
       setMessage("Пароли не совпадают.");
       return;
     }
-    if (cooldownLeft > 0) {
-      setMessage(`Подождите ${cooldownLeft} сек перед повторной попыткой.`);
+    setIsSubmitting(true);
+    const { error } = await supabaseClient.auth.updateUser({ password });
+    if (error) {
+      setIsSubmitting(false);
+      setMessage(error.message);
       return;
     }
-    setIsSubmitting(true);
-    const result = await signUpWithEmail(email, password);
+    await supabaseClient.auth.signOut();
     setIsSubmitting(false);
-    setCooldownUntil(Date.now() + 5000);
-    setIsSuccess(result.ok);
-    setMessage(
-      result.ok
-        ? "Регистрация выполнена. Проверьте почту для подтверждения, если это требуется."
-        : result.error ?? "Ошибка регистрации."
-    );
+    setIsSuccess(true);
+    setMessage("Пароль обновлен. Войдите с новым паролем.");
   };
+
+  if (hasSession === false) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-linear-to-br from-[#0A1628] via-[#1A2B4A] to-[#0F1F3A] px-6">
+        <Card title="Смена пароля" description="Ссылка недействительна">
+          <div className="space-y-3 text-sm text-white/70">
+            <p>Откройте ссылку из письма или запросите новый сброс.</p>
+            <Link className="underline text-emerald-200" href="/reset">
+              Запросить новую ссылку
+            </Link>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (hasSession === null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-linear-to-br from-[#0A1628] via-[#1A2B4A] to-[#0F1F3A] px-6">
+        <Card title="Смена пароля" description="Проверка ссылки">
+          <div className="text-sm text-white/70">Загрузка...</div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-linear-to-br from-[#0A1628] via-[#1A2B4A] to-[#0F1F3A] px-6">
-      <Card title="Регистрация" description="Создание аккаунта">
-        <form
-          className="space-y-4 text-sm text-white/80"
-          onSubmit={handleSubmit}
-        >
+      <Card title="Смена пароля" description="Введите новый пароль">
+        <form className="space-y-4 text-sm text-white/80" onSubmit={handleSubmit}>
           <label className="flex flex-col gap-2 text-xs">
-            Email
-            <input
-              className="rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-white/80 placeholder:text-white/40"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-          </label>
-          <label className="flex flex-col gap-2 text-xs">
-            Пароль
+            Новый пароль
             <div className="relative">
               <input
                 className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 pr-20 text-sm text-white/80 placeholder:text-white/40"
@@ -129,29 +137,18 @@ export default function RegisterPage() {
               <div className="text-[11px] text-amber-200">Пароли не совпадают.</div>
             )}
           </label>
-          <Button className="w-full" type="submit" disabled={isSubmitting || cooldownLeft > 0}>
-            {isSubmitting ? "Создаем..." : "Создать аккаунт"}
+          <Button className="w-full" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Сохраняем..." : "Обновить пароль"}
           </Button>
-          {message && (
-            <div className="text-xs text-white/60">{message}</div>
-          )}
+          {message && <div className="text-xs text-white/60">{message}</div>}
           {isSuccess && (
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-100">
-              <div>Готово! Теперь войдите в аккаунт.</div>
+              <div>Пароль обновлен. Войдите с новым паролем.</div>
               <Link className="mt-2 inline-block underline text-emerald-200" href="/login">
                 Перейти ко входу
               </Link>
-              <div className="mt-2 text-[11px] text-emerald-100/80">
-                Если письмо не пришло за 2–3 минуты, проверьте «Спам».
-              </div>
             </div>
           )}
-          <div className="text-center text-xs">
-            Уже есть аккаунт?{" "}
-            <Link className="underline text-white/60" href="/login">
-              Войти
-            </Link>
-          </div>
         </form>
       </Card>
     </div>

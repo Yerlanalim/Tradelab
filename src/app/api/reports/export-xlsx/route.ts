@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import * as XLSX from "xlsx";
 
 export const runtime = "nodejs";
 
@@ -22,34 +23,17 @@ type P3ResultSummary = {
   items?: SupplierSummaryItem[];
   exportCsvPath?: string;
   exportXlsxPath?: string;
-};
-
-const buildCsv = (items: SupplierSummaryItem[]) => {
-  const header = ["source", "title", "price", "moq", "location", "url"];
-  const rows = items.map((item) => [
-    item.source ?? "",
-    item.title ?? "",
-    item.price ?? "",
-    item.moq ?? "",
-    item.location ?? "",
-    item.url ?? "",
-  ]);
-  const escapeValue = (value: string) => {
-    const normalized = value.replace(/"/g, '""');
-    return `"${normalized}"`;
+  stats?: {
+    totalFound?: number;
+    dedupedCount?: number;
+    finalCount?: number;
   };
-  return [header, ...rows]
-    .map((row) => row.map((value) => escapeValue(String(value))).join(","))
-    .join("\n");
 };
 
 export async function POST(request: Request) {
   const payload = (await request.json()) as ExportReportRequest;
   if (!payload?.reportId) {
-    return NextResponse.json(
-      { ok: false, message: "reportId required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ ok: false, message: "reportId required" }, { status: 400 });
   }
 
   const supabaseUrl = process.env.SUPABASE_URL ?? "";
@@ -77,13 +61,15 @@ export async function POST(request: Request) {
   const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
   const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(token);
 
-  let reportRow: { id: string; user_id: string; result_summary: unknown } | null = null;
+  let reportRow:
+    | { id: string; user_id: string; order_id: string | null; result_summary: unknown }
+    | null = null;
   let ownerId = userData.user?.id ?? null;
 
   if (!userError && ownerId) {
     const { data } = await supabaseAdmin
       .from("reports")
-      .select("id,user_id,result_summary")
+      .select("id,user_id,order_id,result_summary")
       .eq("id", payload.reportId)
       .single();
     reportRow = (data as typeof reportRow) ?? null;
@@ -101,7 +87,7 @@ export async function POST(request: Request) {
     });
     const { data, error } = await supabaseUser
       .from("reports")
-      .select("id,user_id,result_summary")
+      .select("id,user_id,order_id,result_summary")
       .eq("id", payload.reportId)
       .single();
     if (!error && data) {
@@ -121,7 +107,7 @@ export async function POST(request: Request) {
       ownerId = refreshedUser.id;
       const { data: refreshedReport } = await supabaseAdmin
         .from("reports")
-        .select("id,user_id,result_summary")
+        .select("id,user_id,order_id,result_summary")
         .eq("id", payload.reportId)
         .single();
       reportRow = (refreshedReport as typeof reportRow) ?? null;
@@ -134,49 +120,78 @@ export async function POST(request: Request) {
   }
 
   if (!reportRow || !ownerId || reportRow.user_id !== ownerId) {
-    return NextResponse.json(
-      { ok: false, message: "Access denied for report" },
-      { status: 403 }
-    );
+    return NextResponse.json({ ok: false, message: "Access denied for report" }, { status: 403 });
   }
 
   const summary = reportRow.result_summary as P3ResultSummary | null;
+  let jobId: string | null = null;
+  if (reportRow.order_id) {
+    const { data: job } = await supabaseAdmin
+      .from("report_jobs")
+      .insert({ order_id: reportRow.order_id, status: "running" })
+      .select("id")
+      .single();
+    jobId = job?.id ?? null;
+  }
   const items = summary?.items ?? [];
   if (!items.length) {
-    return NextResponse.json(
-      { ok: false, message: "No items to export" },
-      { status: 400 }
-    );
+    return NextResponse.json({ ok: false, message: "No items to export" }, { status: 400 });
   }
 
-  const csv = buildCsv(items);
-  const exportPath = `${ownerId}/${payload.reportId}.csv`;
+  const workbook = XLSX.utils.book_new();
+  const stats = summary?.stats ?? null;
+  const summarySheet = XLSX.utils.json_to_sheet([
+    { metric: "Проанализировано", value: stats?.totalFound ?? "" },
+    { metric: "После дедупа", value: stats?.dedupedCount ?? "" },
+    { metric: "В отчёте", value: stats?.finalCount ?? "" },
+  ]);
+  XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
+
+  const suppliersSheet = XLSX.utils.json_to_sheet(
+    items.map((item) => ({
+      source: item.source ?? "",
+      title: item.title ?? "",
+      price: item.price ?? "",
+      moq: item.moq ?? "",
+      location: item.location ?? "",
+      url: item.url ?? "",
+    }))
+  );
+  XLSX.utils.book_append_sheet(workbook, suppliersSheet, "Suppliers");
+  const xlsxBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+  const exportPath = `${ownerId}/${payload.reportId}.xlsx`;
   const { error: uploadError } = await supabaseAdmin.storage
     .from("exports")
-    .upload(exportPath, csv, {
-      contentType: "text/csv",
+    .upload(exportPath, xlsxBuffer, {
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       upsert: true,
     });
 
   if (uploadError) {
-    return NextResponse.json(
-      { ok: false, message: uploadError.message },
-      { status: 500 }
-    );
+    if (jobId) {
+      await supabaseAdmin.from("report_jobs").update({ status: "failed" }).eq("id", jobId);
+    }
+    return NextResponse.json({ ok: false, message: uploadError.message }, { status: 500 });
   }
 
   await supabaseAdmin
     .from("reports")
     .update({
-      result_summary: { ...(summary ?? {}), exportCsvPath: exportPath },
+      result_summary: { ...(summary ?? {}), exportXlsxPath: exportPath },
     })
     .eq("id", payload.reportId);
 
   await supabaseAdmin.from("p3_events").insert({
     user_id: ownerId,
-    event_type: "export_csv",
+    event_type: "export_xlsx",
     event_meta: { report_id: payload.reportId },
   });
 
-  return NextResponse.json({ ok: true, exportPath });
+  if (jobId) {
+    await supabaseAdmin.from("report_jobs").update({ status: "done" }).eq("id", jobId);
+  }
+
+  return NextResponse.json({ ok: true, exportPath, jobId });
 }

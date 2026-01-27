@@ -47,7 +47,8 @@ export default function ReportsPage() {
   const getExportPath = (report: Report) => {
     const summary = report.resultSummary;
     if (!summary || typeof summary !== "object") return null;
-    return (summary as { exportPath?: string }).exportPath ?? null;
+    const typed = summary as { exportCsvPath?: string; exportXlsxPath?: string };
+    return typed.exportCsvPath ?? typed.exportXlsxPath ?? null;
   };
 
   const handleSeed = async () => {
