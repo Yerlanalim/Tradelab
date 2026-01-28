@@ -66,6 +66,13 @@ const invokeChatHandler = async (
     },
     body: JSON.stringify(payload),
   });
+  if (response.status === 504) {
+    return {
+      ok: true,
+      message: "Сервер не успел ответить (Timeout). Попробуйте упростить запрос или повторить позже.",
+    };
+  }
+
   const data = (await response.json().catch(() => null)) as ChatResponse | null;
   if (!response.ok) {
     const error = new Error(data?.message ?? "Edge Function returned a non-2xx status code");

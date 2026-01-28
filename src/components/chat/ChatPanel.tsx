@@ -214,6 +214,36 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
   const [supplierResult, setSupplierResult] = useState<SupplierResultState | null>(null);
   const [confirmBalance, setConfirmBalance] = useState<number | null>(null);
   const [isBalanceLoading, setIsBalanceLoading] = useState(false);
+
+  // --- НОВОЕ: Состояние для текста загрузки ---
+  const [loadingText, setLoadingText] = useState("Обрабатываю запрос...");
+
+  // --- НОВОЕ: Эффект таймера ---
+  useEffect(() => {
+    if (!isLoading) return;
+
+    const isSupplier = mode === "supplier_search";
+
+    // Начальный текст
+    setLoadingText(isSupplier ? "Запускаю поиск..." : "Думаю...");
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    if (isSupplier) {
+      // Тайминги для поиска поставщиков (более длительный процесс)
+      timers.push(setTimeout(() => setLoadingText("Опрашиваю платформы (Alibaba, MIC)..."), 7500));
+      timers.push(setTimeout(() => setLoadingText("Фильтрую результаты и проверяю ссылки..."), 12500));
+      timers.push(setTimeout(() => setLoadingText("Анализирую цены и MOQ..."), 15000));
+      timers.push(setTimeout(() => setLoadingText("Формирую структуру отчета..."), 22000));
+      timers.push(setTimeout(() => setLoadingText("Почти готово, завершаю форматирование..."), 30000));
+    } else {
+      // Тайминги для обычного чата
+      timers.push(setTimeout(() => setLoadingText("Анализирую контекст..."), 2000));
+      timers.push(setTimeout(() => setLoadingText("Генерирую ответ..."), 5000));
+    }
+
+    return () => timers.forEach(clearTimeout);
+  }, [isLoading, mode]);
   const [intake, setIntake] = useState({
     product: "",
     specs: "",
@@ -1285,6 +1315,14 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
       )}
 
       <div className="p-4 border-t border-white/10">
+        {/* --- НОВОЕ: Индикатор загрузки --- */}
+        {isLoading && (
+          <div className="mb-3 flex items-center gap-2 text-xs text-emerald-400 animate-pulse">
+            <div className="h-2 w-2 rounded-full bg-emerald-400"></div>
+            <span>{loadingText}</span>
+          </div>
+        )}
+
         <div className="mb-2 text-[11px] text-white/50">{disclaimerText}</div>
         <div className="flex gap-2">
           <input

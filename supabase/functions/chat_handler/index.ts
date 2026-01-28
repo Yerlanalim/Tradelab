@@ -1,6 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { TC_PRICING, USD_PRICING } from "../_shared/pricing.ts";
+import { OPENAI_API_KEY, P3_BASE_MODEL, P3_SEARCH_MODEL } from "./config.ts";
+import { createOpenAIClient } from "./openai.ts";
 
 const resolveCorsOrigin = (origin: string | null) => {
   const allowed = (Deno.env.get("ALLOWED_ORIGINS") ?? "")
@@ -20,8 +22,6 @@ const buildCorsHeaders = (origin: string | null) => ({
 const P3_FULL_TC = TC_PRICING.p3FullAnalysis;
 const P3_FULL_USD = USD_PRICING.p3FullAnalysis;
 const P3_RFQ_TC = TC_PRICING.p3Rfq;
-const P3_SEARCH_MODEL = Deno.env.get("P3_SEARCH_MODEL") ?? "gpt-5";
-const P3_FALLBACK_MODEL = Deno.env.get("P3_FALLBACK_MODEL") ?? "gpt-4o-mini";
 const SUPPLIER_INTAKE_TEMPLATE =
   "Товар: ...\n" +
   "Материалы/спецификации: ...\n" +
@@ -64,6 +64,7 @@ type SupplierSearchItem = {
   moq?: string;
   location?: string;
   link?: string;
+  img_url?: string;
   model?: string;
   brand?: string;
   supplier_type?: string;
@@ -96,6 +97,42 @@ type ToolCall = {
   args?: Record<string, unknown>;
   result?: Record<string, unknown> | null;
 };
+// --- TYPES FOR OPENAI RESPONSE ---
+const trace = (stage: string, data: unknown) => {
+  console.log(`\n🔹 [STEP: ${stage}]`);
+  if (Array.isArray(data)) console.log(`Items count: ${data.length}`);
+  else if (typeof data === "string") console.log(data.slice(0, 500) + (data.length > 500 ? "..." : ""));
+  else console.log(JSON.stringify(data, null, 2));
+  console.log("--------------------------\n");
+};
+
+type ResponseContentItem = {
+  type?: string;
+  text?: string;
+};
+
+type ResponseOutputItem = {
+  type?: string;
+  content?: ResponseContentItem[];
+};
+
+type ChatChoice = {
+  message?: {
+    content?: string;
+  };
+};
+
+type OpenAIError = {
+  message?: string;
+  code?: string;
+};
+
+type OpenAIResponseData = {
+  output?: ResponseOutputItem[];
+  output_text?: string;
+  choices?: ChatChoice[];
+  error?: OpenAIError;
+};
 
 const normalizeText = (value: string | null | undefined, max = 360) => {
   if (!value) return "";
@@ -110,29 +147,36 @@ const buildIdempotencyKey = (query: string, sessionId?: string | null, searchId?
   return `p3:${safeQuery || "unknown"}`;
 };
 
-const getResponseText = (data: Record<string, unknown> | null) => {
+const getResponseText = (data: Record<string, unknown> | null): string => {
   if (!data) return "";
-  const parts: string[] = [];
-  const direct = (data as { output_text?: string } | null)?.output_text;
-  if (typeof direct === "string" && direct.trim()) parts.push(direct);
-  const output = (data as { output?: unknown[] } | null)?.output;
-  if (Array.isArray(output)) {
-    for (const item of output as Array<Record<string, unknown>>) {
-      if (typeof item?.text === "string") parts.push(item.text);
-      const content = item?.content;
-      if (typeof content === "string") {
-        parts.push(content);
-        continue;
-      }
-      if (Array.isArray(content)) {
-        for (const piece of content as Array<Record<string, unknown>>) {
-          if (typeof piece?.text === "string") parts.push(piece.text);
-          if (typeof piece?.content === "string") parts.push(piece.content);
-        }
-      }
+  
+  const response = data as OpenAIResponseData;
+
+  if (response.error) {
+      console.error("OpenAI API Returned Error:", response.error);
+      return `Ошибка API: ${response.error.message || JSON.stringify(response.error)}`;
+  }
+
+  if (Array.isArray(response.output)) {
+    const messageItem = response.output.find((item) => item.type === 'message');
+    
+    if (messageItem?.content && Array.isArray(messageItem.content)) {
+       const textBlock = messageItem.content.find(
+         (c) => c.type === 'output_text' || c.type === 'text' || (c.text && typeof c.text === 'string')
+       );
+       if (textBlock?.text) return textBlock.text;
     }
   }
-  return parts.join("\n").trim();
+  
+  if (typeof response.output_text === 'string') {
+    return response.output_text;
+  }
+
+  if (Array.isArray(response.choices) && response.choices.length > 0) {
+    return response.choices[0]?.message?.content || "";
+  }
+
+  return JSON.stringify(data);
 };
 
 const extractJsonCandidate = (raw: string) => {
@@ -198,15 +242,15 @@ const normalizeSearchQuery = async (
       {
         role: "system",
         content:
-          "Нормализуй запрос для поиска поставщиков. Верни JSON: " +
+          "Нормализуй запрос для поиска поставщиков. Переведи на профессиональные термины " +
+          "на EN и ZH. Верни JSON: " +
           "query_en, query_zh, must_have[], material_terms[], product_terms[]. " +
           "must_have — ключевые требования (материал, тип товара, назначение). " +
           "product_terms — основные слова товара. " +
           "material_terms — только материалы. Без лишнего текста.",
       },
       { role: "user", content: query },
-    ],
-    temperature: 0.1,
+    ]
   };
   try {
     const data = await runOpenAI(payload);
@@ -238,19 +282,52 @@ const buildSearchQueries = (
   const baseEn = normalized?.query_en?.trim() || "";
   const baseZh = normalized?.query_zh?.trim() || "";
   const mustHave = normalized?.must_have?.join(" ").trim() || "";
+  
   const queries: string[] = [];
-  const addQuery = (site: string, suffix: string) => {
-    if (baseEn) queries.push(`site:${site} ${baseEn} ${mustHave} ${suffix}`.trim());
-    if (baseZh) queries.push(`site:${site} ${baseZh} ${mustHave} ${suffix}`.trim());
+
+  // Helper function
+  const addQuery = (site: string, text: string, type: "product" | "factory" | "showroom") => {
+    const siteOp = `site:${site}`;
+    const terms = mustHave ? `${text} ${mustHave}` : text;
+    
+    if (type === "product") {
+       // Alibaba specific URL patterns
+       if (site.includes("alibaba")) {
+           queries.push(`${siteOp} ${terms} "product-detail"`);
+       } else {
+           // MIC specific URL patterns
+           queries.push(`${siteOp} ${terms} "product-detail"`);
+       }
+    }
+    if (type === "factory") queries.push(`${siteOp} ${terms} factory`);
+    // Add showroom for MIC as they often list products there
+    if (type === "showroom" && site.includes("made-in-china")) {
+        queries.push(`${siteOp} ${terms} showroom`);
+    }
   };
+
   if (sourceFocus === "alibaba" || sourceFocus === "both") {
-    addQuery("alibaba.com", "\"product-detail\"");
+    if (baseEn) {
+      addQuery("alibaba.com", baseEn, "product");
+      addQuery("alibaba.com", baseEn, "factory");
+    }
   }
+  
   if (sourceFocus === "made-in-china" || sourceFocus === "both") {
-    addQuery("made-in-china.com", "\"product\"");
+    // MIC often works better with Chinese queries or very simple English ones
+    if (baseZh) addQuery("made-in-china.com", baseZh, "product");
+    if (baseEn) {
+        addQuery("made-in-china.com", baseEn, "product");
+        addQuery("made-in-china.com", baseEn, "showroom"); // Added showroom for MIC
+    }
   }
-  return queries.filter(Boolean);
+
+  // INCREASE LIMIT: Allow up to 6 queries to cover both platforms adequately
+  const finalQueries = Array.from(new Set(queries)).slice(0, 6);
+  trace("GENERATED QUERIES", finalQueries);
+  return finalQueries;
 };
+
 
 const getPlatformPriority = (platform: string | undefined | null) => {
   const value = platform?.toLowerCase() ?? "";
@@ -300,99 +377,120 @@ const isValidSupplierName = (name?: string | null) =>
   Boolean(name && name.trim().length > 2 && !isPlaceholderName(name));
 
 const isValidListingLink = (link?: string | null) => {
-  if (!link) return false;
+  if (!link) { trace("LINK REJECTED: Empty", "null"); return false; }
   try {
     const url = new URL(link);
     const host = url.hostname.toLowerCase();
     const path = url.pathname.toLowerCase();
     const full = url.toString().toLowerCase();
 
-    if (host.startsWith("russian.") || host.startsWith("ru.")) return false;
+    if (host.startsWith("russian.") || host.startsWith("ru.")) {
+      trace("LINK REJECTED: Russian subdomain", full);
+      return false;
+    }
     const blocked = [
-      "blog",
-      "news",
-      "article",
-      "insight",
-      "trend",
-      "press",
-      "product_group",
-      "company_profile",
+      "/search",
+      "/login",
+      "/signin",
+      "/account",
+      "/blog",
+      "/news",
+      "/article",
+      "/insight",
+      "/trend",
+      "/press",
+      "/product_group",
+      "/company_profile",
       "supplier.html",
       "company.html",
     ];
-    if (blocked.some((token) => full.includes(token))) return false;
-    if (full.includes("scene=invalid_items")) return false;
+    if (blocked.some((token) => full.includes(token))) {
+      trace("LINK REJECTED: Blocklist match", full);
+      return false;
+    }
+    if (full.includes("scene=invalid_items")) {
+      trace("LINK REJECTED: Invalid items scene", full);
+      return false;
+    }
 
     if (host.endsWith("alibaba.com")) {
-      if (path.includes("/trade/search")) return false;
-      return (
-        path.includes("/product/") ||
+      const isValid = (
         path.includes("/product-detail") ||
-        path.includes("/p-detail")
+        path.includes("/showroom") ||
+        path.includes("/product/") ||
+        path.includes("/p-")
       );
+      if (!isValid) trace("LINK REJECTED: Alibaba pattern mismatch", path);
+      return isValid;
     }
 
     if (host.endsWith("made-in-china.com")) {
-      if (path.includes("/trade/") || path.includes("/search")) return false;
-      return (
-        path.includes("/product") ||
-        path.includes("product_") ||
-        (path.endsWith(".html") && !path.includes("product_group"))
+      const isValid = (
+        path.includes("/product-detail") ||
+        path.includes("/showroom") ||
+        path.includes("/product/") ||
+        path.includes("/china-products/") ||
+        path.includes("/video-channel/") ||
+        path.includes("/amp/")
       );
+      if (!isValid) trace("LINK REJECTED: MIC pattern mismatch", path);
+      return isValid;
     }
 
+    trace("LINK REJECTED: Unknown Domain/Pattern", full);
     return false;
   } catch {
+    trace("LINK REJECTED: URL Parse Error", String(link));
     return false;
   }
 };
 
 const isLikelyListingLink = (link?: string | null) => isValidListingLink(link);
 
-const P3_LINK_VERIFY_LIMIT = 6;
-const P3_LINK_VERIFY_TIMEOUT_MS = 5000;
+// const P3_LINK_VERIFY_LIMIT = 6;
+// const P3_LINK_VERIFY_TIMEOUT_MS = 5000;
 
-const verifyListingLink = async (link: string) => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), P3_LINK_VERIFY_TIMEOUT_MS);
-  try {
-    const response = await fetch(link, {
-      method: "GET",
-      signal: controller.signal,
-      headers: { "User-Agent": "TradeLabBot/1.0" },
-    });
-    if (!response.ok) return false;
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.includes("text/html")) return false;
-    const text = (await response.text()).slice(0, 4000).toLowerCase();
-    return text.includes("<html") || text.includes("<!doctype");
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-};
+// const verifyListingLink = async (link: string) => {
+//   const controller = new AbortController();
+//   const timeoutId = setTimeout(() => controller.abort(), P3_LINK_VERIFY_TIMEOUT_MS);
+//   try {
+//     const response = await fetch(link, {
+//       method: "GET",
+//       signal: controller.signal,
+//       headers: { "User-Agent": "TradeLabBot/1.0" },
+//     });
+//     if (!response.ok) return false;
+//     const contentType = response.headers.get("content-type") ?? "";
+//     if (!contentType.includes("text/html")) return false;
+//     const text = (await response.text()).slice(0, 4000).toLowerCase();
+//     return text.includes("<html") || text.includes("<!doctype");
+//   } catch {
+//     return false;
+//   } finally {
+//     clearTimeout(timeoutId);
+//   }
+// };
 
-const verifyListingLinks = async (items: SupplierSearchItem[]) => {
-  const candidates = items.filter((item) => isLikelyListingLink(item.link));
-  const toCheck = candidates.slice(0, P3_LINK_VERIFY_LIMIT);
-  if (!toCheck.length) return items;
-  const checkedLinks = new Set<string>();
-  const verifiedLinks = new Set<string>();
-  await Promise.all(
-    toCheck.map(async (item) => {
-      if (!item.link) return;
-      checkedLinks.add(item.link);
-      const ok = await verifyListingLink(item.link);
-      if (ok) verifiedLinks.add(item.link);
-    })
-  );
-  return items.filter((item) => {
-    if (!item.link) return true;
-    if (!checkedLinks.has(item.link)) return true;
-    return verifiedLinks.has(item.link);
-  });
-};
+// const verifyListingLinks = async (items: SupplierSearchItem[]) => {
+//   const candidates = items.filter((item) => isLikelyListingLink(item.link));
+//   const toCheck = candidates.slice(0, P3_LINK_VERIFY_LIMIT);
+//   if (!toCheck.length) return items;
+//   const checkedLinks = new Set<string>();
+//   const verifiedLinks = new Set<string>();
+//   await Promise.all(
+//     toCheck.map(async (item) => {
+//       if (!item.link) return;
+//       checkedLinks.add(item.link);
+//       const ok = await verifyListingLink(item.link);
+//       if (ok) verifiedLinks.add(item.link);
+//     })
+//   );
+//   return items.filter((item) => {
+//     if (!item.link) return true;
+//     if (!checkedLinks.has(item.link)) return true;
+//     return verifiedLinks.has(item.link);
+//   });
+// };
 
 const isPreferredSource = (item: SupplierSearchItem) => {
   if (isPreferredHost(item.link)) return true;
@@ -507,16 +605,36 @@ const prioritizeSuppliers = (items: SupplierSearchItem[]) => {
   });
 };
 
-const filterPreferredItems = (items: SupplierSearchItem[]) =>
-  items.filter(
-    (item) =>
-      isPreferredHost(item.link) &&
-      isLikelyListingLink(item.link) &&
-      isValidSupplierName(item.name)
+const filterPreferredItems = (items: SupplierSearchItem[]) => {
+  console.log(`[TRACE] filterPreferredItems: checking ${items.length} items`);
+  return items.filter(
+    (item) => {
+      const isPreferred = isPreferredHost(item.link);
+      const isLikely = isLikelyListingLink(item.link);
+      const isValidName = isValidSupplierName(item.name);
+      // ВРЕМЕННО: игнорируем isLikely по просьбе пользователя
+      const passed = isPreferred && isValidName; 
+      if (!passed) {
+        console.log(`[TRACE] filterPreferredItems REJECTED: ${item.name} | Link: ${item.link} | Reason: pref=${isPreferred}, likely=${isLikely}, name=${isValidName}`);
+      }
+      return passed;
+    }
   );
+};
 
-const filterValidItems = (items: SupplierSearchItem[]) =>
-  items.filter((item) => isLikelyListingLink(item.link) && isValidSupplierName(item.name));
+const filterValidItems = (items: SupplierSearchItem[]) => {
+  console.log(`[TRACE] filterValidItems: checking ${items.length} items`);
+  return items.filter((item) => {
+    const isLikely = isLikelyListingLink(item.link);
+    const isValidName = isValidSupplierName(item.name);
+    // ВРЕМЕННО: игнорируем isLikely по просьбе пользователя
+    const passed = isValidName; 
+    if (!passed) {
+      console.log(`[TRACE] filterValidItems REJECTED: ${item.name} | Link: ${item.link} | Reason: likely=${isLikely}, name=${isValidName}`);
+    }
+    return passed;
+  });
+};
 
 const normalizeSupplierItems = (items: SupplierSearchItem[]) =>
   items.map((item) => {
@@ -528,7 +646,8 @@ const normalizeSupplierItems = (items: SupplierSearchItem[]) =>
 const countPreferredSources = (items: SupplierSearchItem[]) => {
   const counts = { alibaba: 0, mic: 0 };
   for (const item of items) {
-    if (!isPreferredHost(item.link) || !isLikelyListingLink(item.link)) continue;
+    // ВРЕМЕННО: игнорируем isLikely для отладки
+    if (!isPreferredHost(item.link)) continue;
     const host = new URL(item.link ?? "").hostname.toLowerCase();
     if (host.includes("alibaba")) counts.alibaba += 1;
     if (host.includes("made-in-china")) counts.mic += 1;
@@ -554,16 +673,24 @@ const pickPreviewItems = (items: SupplierSearchItem[], limit = 5) => {
 };
 
 const dedupeSuppliers = (items: SupplierSearchItem[]) => {
+  console.log(`[TRACE] dedupeSuppliers: input ${items.length} items`);
   const map = new Map<string, SupplierSearchItem>();
   for (const item of items) {
-    if (!isValidSupplierName(item.name)) continue;
+    if (!isValidSupplierName(item.name)) {
+      console.log(`[TRACE] dedupe REJECTED (invalid name): ${item.name}`);
+      continue;
+    }
     const key = normalizeCompanyName(item.name || "");
-    if (!key) continue;
+    if (!key) {
+      console.log(`[TRACE] dedupe REJECTED (no key): ${item.name}`);
+      continue;
+    }
     const existing = map.get(key);
     if (!existing) {
       map.set(key, item);
       continue;
     }
+    console.log(`[TRACE] dedupe CONFLICT: ${item.name} already exists. Keeping one.`);
     const existingPriority = getPlatformPriority(existing.platform);
     const nextPriority = getPlatformPriority(item.platform);
     if (!existing.link && item.link) {
@@ -572,7 +699,9 @@ const dedupeSuppliers = (items: SupplierSearchItem[]) => {
       map.set(key, item);
     }
   }
-  return Array.from(map.values());
+  const result = Array.from(map.values());
+  console.log(`[TRACE] dedupeSuppliers: output ${result.length} items`);
+  return result;
 };
 
 const scoreSuppliers = (
@@ -626,6 +755,184 @@ const scoreSuppliers = (
   });
 };
 
+// --- НОВЫЕ ТИПЫ ДЛЯ CSV ---
+type CsvItem = {
+  name: string;
+  link: string;
+  price: string;
+  moq: string;
+  platform: string;
+};
+
+// === АГЕНТ 1: CSV HARVESTER ===
+const runHarvesterAgent = async (
+  runOpenAI: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  query: string,
+  queries: string[]
+): Promise<CsvItem[]> => {
+  const csvPrompt = 
+    `Role: Data Harvester. Task: Search for suppliers for "${query}". ` +
+    `Use these queries: ${queries.join(" | ")}. ` +
+    `Output Format: Raw Text with separator "|". ` +
+    `Columns: Name|Link|Price|MOQ|Platform. ` +
+    `Rules: ` +
+    `1. Collect at least 20-30 items total. ` +
+    `2. STRICTLY Valid Product Links only (product-detail). ` +
+    `3. If price/MOQ is missing, put "n/a". ` +
+    `4. Platform must be "Alibaba" or "MIC". ` +
+    `5. Do NOT use markdown code blocks. One item per line.`;
+
+  trace("Harvester", "Starting search...");
+  
+  const payload = {
+    model: "gpt-4.1-mini",
+    input: [
+       { role: "system", content: csvPrompt },
+       { role: "user", content: "Start harvesting." }
+    ],
+    tools: [{ type: "web_search" }],
+    tool_choice: "auto" 
+  };
+
+  try {
+    const data = await runOpenAI(payload);
+    let content = getResponseText(data as Record<string, unknown> | null);
+    
+    // Чистим маркдаун, если модель его добавила
+    content = content.replace(/```csv/g, "").replace(/```/g, "").trim();
+    
+    trace("Harvester Raw Output", content);
+
+    return parseCsvOutput(content);
+  } catch (e) {
+    console.error("Harvester failed", e);
+    return [];
+  }
+};
+
+// Парсер CSV от LLM
+const parseCsvOutput = (text: string): CsvItem[] => {
+  const lines = text.split("\n").filter(l => l.trim().length > 10);
+  const items: CsvItem[] = [];
+  
+  // 1. Попытка распарсить CSV
+  for (const line of lines) {
+    if (line.toLowerCase().includes("name|link") || line.toLowerCase().includes("name | link")) continue;
+    if (line.match(/^[-=\s]+$/)) continue; // Пропуск разделителей таблиц
+
+    // Убираем pipe в начале и конце строки, если они есть
+    const cleanLine = line.trim().replace(/^\||\|$/g, "");
+
+    // Сплитим очищенную строку
+    const parts = cleanLine.split("|").map(p => p.trim());
+    
+    // Эвристика: ищем часть, начинающуюся с http
+    const linkIndex = parts.findIndex(p => p.startsWith("http"));
+    
+    if (linkIndex !== -1) {
+        const name = parts[0]; // Имя обычно первое
+        const link = parts[linkIndex];
+        const price = parts[linkIndex + 1] || "n/a";
+        const moq = parts[linkIndex + 2] || "n/a";
+        // Платформа или из колонки, или угадываем
+        let platform = parts[linkIndex + 3] || "";
+        if (!platform) {
+            if (link.includes("alibaba")) platform = "Alibaba";
+            else if (link.includes("made-in-china")) platform = "Made-in-China";
+            else platform = "Other";
+        }
+
+        if (isValidListingLink(link)) {
+            items.push({ name, link, price, moq, platform });
+        }
+    }
+  }
+
+  // 2. Fallback (План Б): Если CSV не сработал, просто граббим ссылки
+  if (items.length === 0) {
+      console.log("[Harvester] CSV parsing gave 0 items, trying Regex Fallback...");
+      const urlRegex = /https?:\/\/[^\s)|>"]+/g;
+      const matches = text.match(urlRegex) || [];
+      
+      for (const link of matches) {
+          if (isValidListingLink(link)) {
+             let platform = "Other";
+             if (link.includes("alibaba")) platform = "Alibaba";
+             else if (link.includes("made-in-china")) platform = "Made-in-China";
+             
+             items.push({ 
+                 name: "Supplier Item (Auto-detected)", 
+                 link: link, 
+                 price: "Check Link", 
+                 moq: "n/a", 
+                 platform 
+             });
+          }
+      }
+  }
+
+  trace("Harvester Parsed Items", items.length);
+  return items;
+};
+
+// === АГЕНТ 2: SCREENER (FILTER) ===
+const runScreenerAgent = (
+  rawItems: CsvItem[]
+): CsvItem[] => {
+  trace("Screener Input", rawItems.length);
+
+  const unique = new Map();
+  rawItems.forEach(item => {
+     if (!item.link) return;
+     try {
+       // Дедупликация: игнорируем http/https и www
+       const cleanLink = item.link.toLowerCase().replace(/https?:\/\/(www\.)?/, "").split("?")[0];
+       if (!unique.has(cleanLink)) unique.set(cleanLink, item);
+     } catch { }
+  });
+  
+  let filtered = Array.from(unique.values()) as CsvItem[];
+  trace("Screener Output", filtered.length);
+  
+  return filtered.slice(0, 30);
+};
+
+// === АГЕНТ 3: ANALYST (ENRICH) ===
+const runAnalystAgent = async (
+  runOpenAI: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  candidates: CsvItem[],
+  query: string
+): Promise<SupplierSearchResult | null> => {
+  if (candidates.length === 0) return null;
+
+  const csvBlock = candidates.map(i => `${i.name}|${i.link}|${i.price}|${i.moq}`).join("\n");
+
+  const prompt = 
+    `Role: Senior Procurement Analyst. ` +
+    `Task: Analyze these ${candidates.length} supplier candidates for query: "${query}". ` +
+    `Input Format: Name|Link|Price|MOQ. ` +
+    `Steps: ` +
+    `1. Select the top 10 best options based on relevance and credibility. ` +
+    `2. Assign a risk level (Low/Medium/High). ` +
+    `3. Output JSON: { summary, items: [ { name, link, price_range, moq, platform, risk_level, risk_factors[], location } ] }. ` +
+    `Data:\n${csvBlock}`;
+
+  const payload = {
+    model: "gpt-4.1-mini",
+    input: [
+       { role: "system", content: "You are a JSON API. Output valid JSON only." },
+       { role: "user", content: prompt }
+    ]
+  };
+
+  trace("Analyst", "Starting final analysis...");
+  const data = await runOpenAI(payload);
+  const text = getResponseText(data as Record<string, unknown> | null);
+  const candidate = extractJsonCandidate(text);
+  if (!candidate) return null;
+  return JSON.parse(candidate);
+};
+
 const resolveMode = (pageContext = "") => {
   const path = pageContext.toLowerCase();
   if (path.startsWith("/products/supplier-search")) return "supplier_search";
@@ -647,20 +954,23 @@ const buildModePrompt = (mode: string) => {
         "Ты бот TradeLab в режиме Supplier Search. " +
         "Работай как guided flow: уточняющие вопросы → preview → подтверждение → полный результат. " +
         "Не обещай точность, указывай ограничения и источники. " +
-        "Если данных недостаточно, проси уточнение."
+        "Если данных недостаточно, проси уточнение." +
+        "Финальный ответ всегда на русском языке, переводи все технические спецификации и условия."
       );
     case "report":
       return (
         "Ты бот TradeLab в режиме Report. " +
         "Помогаешь интерпретировать отчёты, объясняешь поля и риски, " +
         "предлагаешь логичный следующий шаг (P1/P2/P3/P4). " +
-        "Всегда добавляй блоки «Источник» и «Ограничение»."
+        "Всегда добавляй блоки «Источник» и «Ограничение»." +
+        "Финальный ответ всегда на русском языке, переводи все технические спецификации и условия."
       );
     default:
       return (
         "Ты бот TradeLab в режиме Assistant. " +
         "Отвечай кратко и структурированно, без запуска полного поиска поставщиков. " +
-        "Если пользователь просит найти поставщиков, предложи перейти в раздел /products/supplier-search."
+        "Если пользователь просит найти поставщиков, предложи перейти в раздел /products/supplier-search." +
+        "Финальный ответ всегда на русском языке, переводи все технические спецификации и условия."
       );
   }
 };
@@ -792,9 +1102,16 @@ Deno.serve(async (req) => {
     });
   }
 
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  // const apiKey = Deno.env.get("OPENAI_API_KEY");
+  const apiKey = OPENAI_API_KEY;
   if (!apiKey) {
     return new Response(JSON.stringify({ ok: false, message: "Missing OPENAI_API_KEY" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500,
+    });
+  }
+  if (!P3_SEARCH_MODEL || !P3_BASE_MODEL) {
+    return new Response(JSON.stringify({ ok: false, message: "Missing model configuration" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 500,
     });
@@ -919,43 +1236,43 @@ Deno.serve(async (req) => {
       : {};
 
   const basePayload = {
-    model: Deno.env.get("P3_BASE_MODEL") ?? "gpt-4o-mini",
+    model: P3_BASE_MODEL,
     input: [
       { role: "system", content: [systemPrompt, userContext].filter(Boolean).join("\n\n") },
       ...(Array.isArray(messages) ? messages : []),
-    ],
-    temperature: 0.3,
+    ]
   };
 
-  const runOpenAI = async (payload: Record<string, unknown>) => {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("OpenAI error", response.status, errorText);
-      const model =
-        typeof (payload as { model?: unknown }).model === "string"
-          ? ((payload as { model?: string }).model ?? "")
-          : "";
-      const isModelError =
-        response.status === 400 ||
-        response.status === 404 ||
-        /model/i.test(errorText) ||
-        /not\s+found/i.test(errorText);
-      if (model.startsWith("gpt-5") && isModelError && model !== P3_FALLBACK_MODEL) {
-        const fallbackPayload = { ...payload, model: P3_FALLBACK_MODEL };
-        return runOpenAI(fallbackPayload);
-      }
-      throw new Error("AI service unavailable");
-    }
-    return response.json();
-  };
+  // const runOpenAI = async (payload: Record<string, unknown>) => {
+  //   const response = await fetch("https://api.openai.com/v1/responses", {
+  //     method: "POST",
+  //     headers: {
+  //       "Content-Type": "application/json",
+  //       Authorization: `Bearer ${apiKey}`,
+  //     },
+  //     body: JSON.stringify(payload),
+  //   });
+  //   if (!response.ok) {
+  //     const errorText = await response.text();
+  //     console.error("OpenAI error", response.status, errorText);
+  //     const model =
+  //       typeof (payload as { model?: unknown }).model === "string"
+  //         ? ((payload as { model?: string }).model ?? "")
+  //         : "";
+  //     const isModelError =
+  //       response.status === 400 ||
+  //       response.status === 404 ||
+  //       /model/i.test(errorText) ||
+  //       /not\s+found/i.test(errorText);
+  //     if (model.startsWith("gpt-5") && isModelError && model !== P3_FALLBACK_MODEL) {
+  //       const fallbackPayload = { ...payload, model: P3_FALLBACK_MODEL };
+  //       return runOpenAI(fallbackPayload);
+  //     }
+  //     throw new Error("AI service unavailable");
+  //   }
+  //   return response.json();
+  // };
+  const { runOpenAI } = createOpenAIClient(apiKey);
 
   const ensureEvidenceBlocks = (text: string, source: string, limitation: string) => {
     const hasSource = /Источник:/i.test(text);
@@ -1013,6 +1330,9 @@ Deno.serve(async (req) => {
 
   const detectTool = (message: string) => {
     const text = message.toLowerCase();
+    if (text.startsWith("что такое") || text.includes("что значит") || text.includes("расскажи про")) {
+        return null; 
+    }
     if (text.includes("hs") || text.includes("hs-код") || text.includes("код тнвэд")) {
       return "hs_classify";
     }
@@ -1038,24 +1358,6 @@ Deno.serve(async (req) => {
     return null;
   };
 
-  const repairSupplierJson = async (raw: string) => {
-    const repairPayload = {
-      model: P3_SEARCH_MODEL,
-      input: [
-        {
-          role: "system",
-          content:
-            "Ты исправляешь JSON для SupplierSearchResult. Верни только валидный JSON. " +
-            "Формат: summary, bench(price_range, moq_range), items[] (name, platform, price_range, moq, location, link, model, brand, supplier_type, years_on_platform, verification_badges, risk_level, risk_factors), limitations.",
-        },
-        { role: "user", content: raw },
-      ],
-      temperature: 0.1,
-    };
-    const data = await runOpenAI(repairPayload);
-    const text = getResponseText(data as Record<string, unknown> | null);
-    return parseSupplierResult(text);
-  };
 
   const runToolCall = async (toolName: string, query: string) => {
     const prompts: Record<string, string> = {
@@ -1080,8 +1382,7 @@ Deno.serve(async (req) => {
       input: [
         { role: "system", content: toolPrompt },
         { role: "user", content: query },
-      ],
-      temperature: 0.2,
+      ]
     };
     const data = await runOpenAI(payload);
     const text = getResponseText(data as Record<string, unknown> | null);
@@ -1167,7 +1468,8 @@ Deno.serve(async (req) => {
     sourceFocus: "both" | "alibaba" | "made-in-china" = "both",
     searchQueries: string[] = []
   ) => {
-    const scope = modeLabel === "preview" ? "3–5" : "10";
+    // Requesting 15-25 to ensure we have enough valid ones after filtering
+    const scope = modeLabel === "preview" ? "15" : "25";
     const sourceLine =
       sourceFocus === "alibaba"
         ? "Ищи только на Alibaba.com, укажи ссылку и площадку."
@@ -1183,7 +1485,8 @@ Deno.serve(async (req) => {
       : "";
     return (
       "Ты ассистент TradeLab, выполняешь web search по запросу пользователя. " +
-      `Верни только JSON в формате SupplierSearchResult. Нужны ${scope} поставщиков. ` +
+      `Верни только JSON в формате SupplierSearchResult. Пытайся найти минимум ${scope} релевантных поставщиков. ` +
+      "ВАЖНО: Каждый товар должен быть от уникальной компании. Не возвращай несколько товаров от одного и того же поставщика. " +
       `${sourceLine} ` +
       "Используй только домены www.alibaba.com, m.alibaba.com и www.made-in-china.com. " +
       "Запрещены локализованные домены (russian.alibaba.com, ru.made-in-china.com). " +
@@ -1192,7 +1495,7 @@ Deno.serve(async (req) => {
       "Обязательно используй только прямые ссылки на карточки товара/компании, не ссылки поиска, не image-similar, не статьи/блоги. " +
       "Не используй заглушки вроде 'Поставщик 1' — укажи реальное название компании с источника. " +
       "Если поле неизвестно, укажи 'н/д', но ссылка должна быть валидной карточкой. " +
-      "Поля: summary, bench(price_range, moq_range), items[] (name, platform, price_range, moq, location, link, model, brand, supplier_type, years_on_platform, verification_badges, risk_level, risk_factors), limitations. " +
+      "Поля: summary, bench(price_range, moq_range), items[] (name, link, price, moq, platform), limitations. " +
       "Без лишнего текста, без markdown, без объяснений, только JSON."
     );
   };
@@ -1215,6 +1518,7 @@ Deno.serve(async (req) => {
     sourceFocus: "both" | "alibaba" | "made-in-china" = "both",
     searchQueries: string[] = []
   ) => {
+    console.log(`[TRACE] runSupplierSearch START: mode=${modeLabel}, source=${sourceFocus}, queries=${searchQueries.length}`);
     const prompt = buildSearchPrompt(modeLabel, sourceFocus, searchQueries);
     const payload = {
       ...basePayload,
@@ -1226,18 +1530,33 @@ Deno.serve(async (req) => {
       tools: [{ type: "web_search" }],
       tool_choice: { type: "web_search" },
     };
-    const attempts = 2;
+    const attempts = 1; // СТАЛО
+
     let lastData: Record<string, unknown> | null = null;
     let parsed: SupplierSearchResult | null = null;
-    for (let i = 0; i < attempts; i += 1) {
-      const data = await runOpenAI(payload);
-      lastData = data;
-      const text = getResponseText(data as Record<string, unknown> | null);
-      parsed = parseSupplierResult(text);
-      if (parsed) break;
-      parsed = await repairSupplierJson(text);
-      if (parsed) break;
+    
+    try {
+        const data = await runOpenAI(payload);
+        lastData = data;
+        const text = getResponseText(data as Record<string, unknown> | null);
+        trace("RAW LLM OUTPUT", text);
+        
+        parsed = parseSupplierResult(text);
+        
+        if (!parsed) {
+             console.log("[TRACE] JSON parse failed. Returning empty result.");
+             parsed = { summary: "Ошибка разбора данных", items: [] };
+        }
+
+        if (parsed?.items) {
+          console.log(`[TRACE] parsed ${parsed.items.length} items from AI`);
+        } else {
+          console.log("[TRACE] no items parsed from AI response");
+        }
+    } catch (err) {
+        console.error("[TRACE] Error in runSupplierSearch:", err);
     }
+
     return { data: lastData, parsed };
   };
 
@@ -1407,8 +1726,7 @@ Deno.serve(async (req) => {
                 content: "Ты помощник TradeLab. Пиши деловой RFQ для поставщиков.",
               },
               { role: "user", content: rfqPrompt },
-            ],
-            temperature: 0.2,
+            ]
           });
           const rfqText = getResponseText(rfqResponse as Record<string, unknown> | null) || "RFQ готов.";
           await supabaseAdmin.from("api_usage").insert({
@@ -1559,120 +1877,73 @@ Deno.serve(async (req) => {
         const normalizedSearch =
           normalizedFromFlow ?? (await normalizeSearchQuery(runOpenAI, query));
         const searchQueries = buildSearchQueries(normalizedSearch, "both");
-        const { data, parsed } = await runSupplierSearch("preview", query, "both", searchQueries);
-        const usage = data?.usage ?? null;
+        
+        // --- START NEW FUNNEL PIPELINE ---
+        const rawCsvItems = await runHarvesterAgent(runOpenAI, query, searchQueries);
+        
+        if (rawCsvItems.length === 0) {
+           await logP3Event("error", { code: "harvester_empty", stage: "preview" });
+           const responsePayload = {
+             ok: true,
+             mode,
+             message: "Не удалось найти поставщиков по вашему запросу. Попробуйте уточнить параметры.",
+             response: "Не удалось найти поставщиков по вашему запросу. Попробуйте уточнить параметры.",
+             suggested_chips: [
+               {
+                 id: "p3-intake-template",
+                 label: "Заполнить параметры",
+                 action: "insert",
+                 payload: SUPPLIER_INTAKE_TEMPLATE,
+               },
+             ],
+             ui_hints: { progress_state: "preview" },
+             tool_calls: [],
+             entities: { query },
+             summary: null,
+           };
+           return new Response(JSON.stringify(responsePayload), {
+             headers: { ...corsHeaders, "Content-Type": "application/json" },
+           });
+        }
+
+        const candidates = runScreenerAgent(rawCsvItems);
+        const parsed = await runAnalystAgent(runOpenAI, candidates, query);
+        
         if (!parsed) {
-          await supabaseAdmin.from("api_usage").insert({
-            provider: "openai",
-            user_id: userData.user?.id ?? null,
-            request_meta: {
-              mode,
-              stage: "preview",
-              page_context,
-              session_id,
-              model: basePayload.model,
-              error: "parse_failed",
-            },
-            cost_estimate: null,
-          });
-          await logP3Event("error", { code: "preview_parse_failed" });
-          const nextRefineCount =
-            flowState?.step === "shortlist" ? currentRefine + 1 : currentRefine;
+          await logP3Event("error", { code: "analyst_failed", stage: "preview" });
           const responsePayload = {
             ok: true,
             mode,
-            message:
-              "Не получилось собрать preview из источников. Давайте уточним параметры запроса по шаблону.",
-            response:
-              "Не получилось собрать preview из источников. Давайте уточним параметры запроса по шаблону.",
-            suggested_chips: [
-              {
-                id: "p3-intake-template",
-                label: "Заполнить параметры",
-                action: "insert",
-                payload: SUPPLIER_INTAKE_TEMPLATE,
-              },
-            ],
+            message: "Ошибка анализа данных. Попробуйте еще раз.",
+            response: "Ошибка анализа данных. Попробуйте еще раз.",
+            suggested_chips: [],
             ui_hints: { progress_state: "preview" },
-            tool_calls: [
-              {
-                name: "supplier_search_preview",
-                args: { query },
-                result: null,
-              },
-            ],
-            entities: { query, refine_count: nextRefineCount },
+            tool_calls: [],
+            entities: { query },
             summary: null,
           };
-          await persistEntities((responsePayload.entities ?? null) as Record<string, unknown> | null);
           return new Response(JSON.stringify(responsePayload), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
 
-        let mergedItems = parsed.items;
-        const initialCounts = countPreferredSources(mergedItems);
-        if (initialCounts.alibaba === 0) {
-          const fallback = await runSupplierSearch(
-            "preview",
-            query,
-            "alibaba",
-            buildSearchQueries(normalizedSearch, "alibaba")
-          );
-          if (fallback.parsed?.items?.length) {
-            mergedItems = mergeSuppliers(mergedItems, fallback.parsed.items);
-          }
-        }
-        if (initialCounts.mic === 0) {
-          const fallback = await runSupplierSearch(
-            "preview",
-            query,
-            "made-in-china",
-            buildSearchQueries(normalizedSearch, "made-in-china")
-          );
-          if (fallback.parsed?.items?.length) {
-            mergedItems = mergeSuppliers(mergedItems, fallback.parsed.items);
-          }
-        }
-
-        mergedItems = normalizeSupplierItems(mergedItems);
-        const budgetRange = parseBudgetFromQuery(query);
-        const moqRange = parseMoqFromQuery(query);
+        const mergedItems = normalizeSupplierItems(parsed.items);
         const validItems = filterValidItems(mergedItems);
-        const totalFound = validItems.length;
-        const preferredItems = filterPreferredItems(mergedItems);
-        const effectiveItems = preferredItems.length >= 3 ? preferredItems : validItems;
-        const prioritizedItems = prioritizeSuppliers(effectiveItems);
-        let dedupedItems = dedupeSuppliers(prioritizedItems);
-        const requirementTerms = [
-          ...(normalizedSearch?.must_have ?? []),
-          ...(normalizedSearch?.material_terms ?? []),
-          ...(normalizedSearch?.product_terms ?? []),
-        ];
-        dedupedItems = applyTermFilter(dedupedItems, requirementTerms, 3);
-        dedupedItems = applyRangeFilter(dedupedItems, budgetRange, (item) => item.price_range, 3);
-        dedupedItems = applyRangeFilter(dedupedItems, moqRange, (item) => item.moq, 3);
-        const shouldVerifyLinks = Deno.env.get("P3_VERIFY_LINKS") !== "false";
-        const verifiedItems = shouldVerifyLinks ? await verifyListingLinks(dedupedItems) : dedupedItems;
-        const effectiveVerifiedItems = verifiedItems.length >= 3 ? verifiedItems : dedupedItems;
-        const scoredItems = scoreSuppliers(effectiveVerifiedItems, budgetRange, moqRange);
+        const totalFound = rawCsvItems.length;
+        const scoredItems = scoreSuppliers(mergedItems, null, null); 
         const foundCount = scoredItems.length;
-        const dedupedCount = dedupedItems.length;
         const previewItems = pickPreviewItems(scoredItems, 5);
         const sourceCounts = countPreferredSources(validItems);
+        
         await logP3Event("quality_metrics", {
           stage: "preview",
-          verify_links: shouldVerifyLinks,
           ...buildQualityMetrics(scoredItems),
           sourceCounts,
         });
-        const sourceWarning =
-          preferredItems.length < 3
-            ? "Недостаточно ссылок с Alibaba/Made-in-China по запросу. Результат может быть неполным."
-            : null;
+
         const previewResult = {
           ...parsed,
-          limitations: [parsed.limitations, sourceWarning].filter(Boolean).join(" "),
+          limitations: parsed.limitations || "Результаты на основе веб-поиска.",
         };
 
         uiHints = {
@@ -1686,6 +1957,9 @@ Deno.serve(async (req) => {
           "LLM web search",
           defaultSupplierLimitation
         );
+
+        const dedupedCount = candidates.length;
+        const usage = null; // No usage tracking for agents in simplified mode
 
         let searchId: string | null = null;
         const existingSearchId =
@@ -2011,132 +2285,69 @@ Deno.serve(async (req) => {
         });
       }
 
-      const normalizedSearch =
-        normalizedFromFlow ?? (await normalizeSearchQuery(runOpenAI, query));
-      const searchQueries = buildSearchQueries(normalizedSearch, "both");
-      const { data, parsed } = await runSupplierSearch("full", query, "both", searchQueries);
-      const usage = data?.usage ?? null;
+      // const normalizedSearch =
+      //   normalizedFromFlow ?? (await normalizeSearchQuery(runOpenAI, query));
+      // const searchQueries = buildSearchQueries(normalizedSearch, "both");
+      // const { data, parsed } = await runSupplierSearch("full", query, "both", searchQueries);
+      // const usage = data?.usage ?? null;
 
-      if (!parsed) {
-        await supabaseAdmin.from("api_usage").insert({
-          provider: "openai",
-          user_id: userData.user?.id ?? null,
-          request_meta: {
-            mode,
-            stage: "full",
-            page_context,
-            session_id,
-            model: basePayload.model,
-            error: "parse_failed",
-          },
-          cost_estimate: null,
-        });
-        await logP3Event("error", { code: "parse_failed", stage: "full" });
-        await refundTc(debitRef, "refund_p3_parse_error");
-        if (order?.id) {
-          await supabaseAdmin
-            .from("orders")
-            .update({ status: "failed", error_reason: "parse_failed" })
-            .eq("id", order.id);
+      try {
+        const normalizedSearch =
+          normalizedFromFlow ?? (await normalizeSearchQuery(runOpenAI, query));
+        const searchQueries = buildSearchQueries(normalizedSearch, "both");
+        
+        // --- START NEW FUNNEL PIPELINE ---
+        const rawCsvItems = await runHarvesterAgent(runOpenAI, query, searchQueries);
+        
+        if (rawCsvItems.length === 0) {
+           await logP3Event("error", { code: "harvester_empty", stage: "full" });
+           await refundTc(debitRef, "harvester_empty");
+           return new Response(JSON.stringify({
+             ok: true, mode, message: "Не удалось найти поставщиков. Попробуйте уточнить запрос.", response: "Не удалось найти поставщиков.", suggested_chips: [], ui_hints: { progress_state: "preview" }
+           }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
-        const responsePayload = {
-          ok: true,
-          mode,
-          message:
-            "Полный анализ не сформирован. Попробуйте уточнить запрос и повторить. Средства возвращены.",
-          response:
-            "Полный анализ не сформирован. Попробуйте уточнить запрос и повторить. Средства возвращены.",
-          suggested_chips: [],
-          ui_hints: { progress_state: "preview" },
-          tool_calls: [
-            {
-              name: "supplier_search_full",
-              args: { query },
-              result: null,
-            },
-          ],
-          entities: { query, normalized_search: normalizedFromFlow ?? null },
-          summary: null,
+
+        const candidates = runScreenerAgent(rawCsvItems);
+        const parsed = await runAnalystAgent(runOpenAI, candidates, query);
+        
+        if (!parsed) {
+          await logP3Event("error", { code: "analyst_failed", stage: "full" });
+          await refundTc(debitRef, "analyst_failed");
+          return new Response(JSON.stringify({
+             ok: true, mode, message: "Ошибка анализа данных. Средства возвращены.", response: "Ошибка анализа данных.", suggested_chips: [], ui_hints: { progress_state: "preview" }
+          }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        const mergedItems = normalizeSupplierItems(parsed.items);
+        const budgetRange = parseBudgetFromQuery(query);
+        const moqRange = parseMoqFromQuery(query);
+        const validItems = filterValidItems(mergedItems);
+        
+        const totalFound = rawCsvItems.length;
+        const preferredItems = filterPreferredItems(mergedItems);
+        const scoredItems = scoreSuppliers(mergedItems, budgetRange, moqRange);
+        const foundCount = scoredItems.length;
+        const dedupedCount = candidates.length;
+        const enrichedItems = enrichSuppliers(scoredItems, 30);
+        const sourceCounts = countPreferredSources(validItems);
+        const usage = null;
+
+        await logP3Event("quality_metrics", {
+          stage: "full",
+          ...buildQualityMetrics(enrichedItems),
+          sourceCounts,
+        });
+
+        const fullResult = {
+          ...parsed,
+          limitations: parsed.limitations || "Данные из открытых источников.",
         };
-        await persistEntities((responsePayload.entities ?? null) as Record<string, unknown> | null);
-        return new Response(JSON.stringify(responsePayload), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
 
-      let mergedItems = parsed.items;
-      const initialCounts = countPreferredSources(mergedItems);
-      if (initialCounts.alibaba === 0) {
-        const fallback = await runSupplierSearch(
-          "full",
-          query,
-          "alibaba",
-          buildSearchQueries(normalizedSearch, "alibaba")
+        const responseText = ensureEvidenceBlocks(
+          formatSupplierFull(fullResult, enrichedItems),
+          "LLM web search",
+          defaultSupplierLimitation
         );
-        if (fallback.parsed?.items?.length) {
-          mergedItems = mergeSuppliers(mergedItems, fallback.parsed.items);
-        }
-      }
-      if (initialCounts.mic === 0) {
-        const fallback = await runSupplierSearch(
-          "full",
-          query,
-          "made-in-china",
-          buildSearchQueries(normalizedSearch, "made-in-china")
-        );
-        if (fallback.parsed?.items?.length) {
-          mergedItems = mergeSuppliers(mergedItems, fallback.parsed.items);
-        }
-      }
-
-      mergedItems = normalizeSupplierItems(mergedItems);
-      const budgetRange = parseBudgetFromQuery(query);
-      const moqRange = parseMoqFromQuery(query);
-      const validItems = filterValidItems(mergedItems);
-      const totalFound = validItems.length;
-      const preferredItems = filterPreferredItems(mergedItems);
-      const effectiveItems = preferredItems.length >= 6 ? preferredItems : validItems;
-      const prioritizedItems = prioritizeSuppliers(effectiveItems);
-      let dedupedItems = dedupeSuppliers(prioritizedItems);
-      const requirementTerms = [
-        ...(normalizedSearch?.must_have ?? []),
-        ...(normalizedSearch?.material_terms ?? []),
-        ...(normalizedSearch?.product_terms ?? []),
-      ];
-      dedupedItems = applyTermFilter(dedupedItems, requirementTerms, 10);
-      dedupedItems = applyRangeFilter(dedupedItems, budgetRange, (item) => item.price_range, 10);
-      dedupedItems = applyRangeFilter(dedupedItems, moqRange, (item) => item.moq, 10);
-      const shouldVerifyLinks = Deno.env.get("P3_VERIFY_LINKS") !== "false";
-      const verifiedItems = shouldVerifyLinks ? await verifyListingLinks(dedupedItems) : dedupedItems;
-      const effectiveVerifiedItems = verifiedItems.length >= 6 ? verifiedItems : dedupedItems;
-      const scoredItems = scoreSuppliers(effectiveVerifiedItems, budgetRange, moqRange);
-      const foundCount = scoredItems.length;
-      const dedupedCount = dedupedItems.length;
-      const enrichedItems = enrichSuppliers(scoredItems, 30);
-      const sourceCounts = countPreferredSources(validItems);
-      await logP3Event("quality_metrics", {
-        stage: "full",
-        verify_links: shouldVerifyLinks,
-        ...buildQualityMetrics(enrichedItems),
-        sourceCounts,
-      });
-      const sourceWarning =
-        preferredItems.length < 6
-          ? "Недостаточно ссылок с Alibaba/Made-in-China по запросу. Результат может быть неполным."
-          : null;
-      const lowCountWarning =
-        enrichedItems.length < 10
-          ? "По запросу найдено меньше 10 релевантных поставщиков."
-          : null;
-      const fullResult = {
-        ...parsed,
-        limitations: [parsed.limitations, sourceWarning, lowCountWarning].filter(Boolean).join(" "),
-      };
-      const responseText = ensureEvidenceBlocks(
-        formatSupplierFull(fullResult, enrichedItems),
-        "LLM web search",
-        defaultSupplierLimitation
-      );
       const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
       const { data: report } = await supabaseAdmin
         .from("reports")
@@ -2192,6 +2403,7 @@ Deno.serve(async (req) => {
           supplier_type: item.supplier_type ?? null,
           years_on_platform: item.years_on_platform ?? null,
           verification_badges: item.verification_badges ?? null,
+          img_url: item.img_url ?? null,
           url: item.link ?? null,
         })),
         query,
@@ -2334,10 +2546,62 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify(responsePayload), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+      } catch (error) {
+        await refundTc(debitRef, "refund_p3_full_error");
+        await logP3Event("error", {
+          code: "full_generation_failed",
+          stage: "full",
+          message: error instanceof Error ? error.message : "unknown_error",
+        });
+        if (order?.id) {
+          await supabaseAdmin
+            .from("orders")
+            .update({ status: "failed", error_reason: "full_generation_failed" })
+            .eq("id", order.id);
+        }
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            mode,
+            message: "Полный анализ не сформирован. Средства возвращены. Попробуйте позже.",
+            response: "Полный анализ не сформирован. Средства возвращены. Попробуйте позже.",
+            suggested_chips: [],
+            ui_hints: { progress_state: "preview" },
+            tool_calls: [],
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     if (mode === "assistant") {
       const normalized = lastUserMessage.toLowerCase();
+      if (confirmActionId === "p3_full_v1") {
+        const text =
+          "Полный поиск доступен только в разделе Supplier Search. " +
+          "Откройте его, чтобы запустить платный анализ.";
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            mode,
+            message: text,
+            response: text,
+            suggested_chips: [
+              {
+                id: "go-supplier-search",
+                label: "Открыть поиск поставщиков",
+                action: "redirect",
+                payload: "/products/supplier-search",
+              },
+            ],
+            ui_hints: { redirect_to: "/products/supplier-search" },
+            tool_calls: [],
+            entities: null,
+            summary: buildSummary(text),
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       if (
         normalized.includes("поставщик") ||
         normalized.includes("supplier") ||
