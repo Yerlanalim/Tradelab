@@ -1,7 +1,39 @@
+import { GPT5_MINI_PRICING } from './config.js';
+
 type OpenAIResponse = Record<string, unknown>;
 
-export const createOpenAIClient = (apiKey: string) => {
+export const calculateCost = (model: string, usage: any) => {
+  if (!usage) return 0;
+  
+  const pricing = GPT5_MINI_PRICING;
+  
+  let promptTokens = usage.prompt_tokens || 0;
+  let completionTokens = usage.completion_tokens || 0;
+  const totalTokens = usage.total_tokens || 0;
+
+  // Fallback: if breakdown is missing but total is present
+  if (totalTokens > 0 && promptTokens === 0 && completionTokens === 0) {
+    promptTokens = totalTokens;
+  }
+  
+  const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
+  const nonCachedInput = Math.max(0, promptTokens - cachedTokens);
+  
+  const cost = (
+    (nonCachedInput * pricing.input) / 1000000 +
+    (cachedTokens * pricing.cached_input) / 1000000 +
+    (completionTokens * pricing.output) / 1000000
+  );
+  
+  return cost;
+};
+
+export const createOpenAIClient = (apiKey?: string) => {
   const runOpenAI = async (payload: Record<string, unknown>, onPartialContent?: (content: string) => void): Promise<OpenAIResponse> => {
+    if (!apiKey) {
+      throw new Error('OpenAI API key not provided. Please configure OPENAI_API_KEY or use Google fallback.');
+    }
+
     const model = typeof payload.model === 'string' ? payload.model : 'gpt-5-mini';
     
     const runOnce = async (requestModel: string): Promise<OpenAIResponse> => {
@@ -43,6 +75,7 @@ export const createOpenAIClient = (apiKey: string) => {
       const timeoutId = setTimeout(() => controller.abort(), 180000);
 
       let accumulatedContent = '';
+      let usage: any = null;
 
       try {
         const response = await fetch(endpoint, {
@@ -93,6 +126,12 @@ export const createOpenAIClient = (apiKey: string) => {
                       throw new Error(`OPENAI_API_ERROR: ${errCode} - ${errMsg}`);
                   }
 
+                  if (parsed.usage) {
+                    usage = parsed.usage;
+                  } else if (parsed.response?.usage) {
+                    usage = parsed.response.usage;
+                  }
+
                   let snatchedText = "";
                   
                   // 1. Standard text deltas
@@ -119,16 +158,23 @@ export const createOpenAIClient = (apiKey: string) => {
 
           return { 
             output_text: accumulatedContent,
-            choices: [{ message: { content: accumulatedContent } }]
+            choices: [{ message: { content: accumulatedContent } }],
+            usage: usage
           } as OpenAIResponse;
         } else {
           const data = await response.json();
+          usage = data.usage;
           if (data.output?.[0]?.content?.[0]?.text) {
             (data as any).output_text = data.output[0].content[0].text;
           }
           return data as OpenAIResponse;
         }
       } finally {
+        if (usage) {
+          const totalTokens = usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0));
+          const cost = calculateCost(requestModel, usage);
+          console.log(`[OpenAI Usage] Total Tokens: ${totalTokens}, Cost: $${cost.toFixed(6)}`);
+        }
         clearTimeout(timeoutId);
       }
     };

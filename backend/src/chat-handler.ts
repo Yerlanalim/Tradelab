@@ -1,6 +1,7 @@
 import { SupabaseClient, createClient } from '@supabase/supabase-js';
-import { P3_BASE_MODEL, P3_SEARCH_MODEL } from './config.js';
+import { P3_BASE_MODEL, P3_SEARCH_MODEL, GEMINI_2_5_PRO_PRICING, GEMINI_2_5_FLASH_PRICING } from './config.js';
 import { TC_PRICING, USD_PRICING } from './pricing.js';
+import { calculateCost } from './openai.js';
 
 // --- TYPES ---
 
@@ -117,12 +118,18 @@ const isValidListingLink = (link: string) => {
     
     // For Alibaba - any product related path
     if (h.includes("alibaba.com")) {
-       return p.includes("product-detail") || p.includes("/product/") || p.includes("/p-") || p.includes("/showroom/");
+       const isProduct = p.includes("product-detail") || p.includes("/product/") || p.includes("/p-");
+       // Most product IDs are long numeric strings
+       const hasId = /\d{10,}/.test(p); 
+       return isProduct && hasId;
     }
     // For Made-in-China - any product related path
     if (h.includes("made-in-china.com")) {
-       return p.includes("/product/") || p.includes("product-detail") || p.includes("/showroom/");
+       const isProduct = p.includes("/product/") || p.includes("product-detail");
+       return isProduct && p.length > 20;
     }
+    
+    console.log(`[Harvester] Link rejected: ${link} (Path: ${p})`);
     return false;
   } catch { return false; }
 };
@@ -170,8 +177,44 @@ const formatSupplierFull = (analyzed: any, items: any[]) => {
 
 // --- AGENTS ---
 
-const runHarvesterAgent = async (runOpenAI: any, query: string): Promise<CsvItem[]> => {
+const runHarvesterAgent = async (runOpenAI: any, runGeminiSearch: any, query: string, googleConfig: GoogleConfig): Promise<CsvItem[]> => {
   trace("Harvester", `Streaming Search for: ${query}`);
+  
+  // Google Gemini Search Fallback
+  if (!googleConfig.hasOpenAI && googleConfig.hasGemini) {
+    console.log('[Harvester] Using Gemini Google Search Grounding');
+    try {
+      // Более надежная очистка: ищем текст между Товар: и следующим полем
+      let cleanQuery = query;
+      const productMatch = query.match(/Товар:\s*(.*?)(?:\s*Материалы\/спецификации:|$)/i);
+      if (productMatch && productMatch[1]) {
+        cleanQuery = productMatch[1].trim();
+      } else {
+        // Fallback: просто убираем префикс и берем первые 60 символов
+        cleanQuery = query.replace(/^Товар:\s*/i, '').split(/[МM]OQ|Бюджет|Сроки/)[0].trim().slice(0, 100);
+      }
+      
+      const res = await runGeminiSearch(`${cleanQuery} product listing alibaba`);
+      const content = getResponseText(res);
+      const links = extractLinks(content);
+      
+      const items = links.map(link => ({
+        name: "Product Item",
+        link: link,
+        platform: link.includes("alibaba") ? "Alibaba" : "Made-in-China"
+      }));
+      
+      trace("Harvester Final (Gemini)", items.length);
+      return items;
+    } catch (error) {
+      console.error('[Harvester] Gemini Search failed:', error);
+      return [];
+    }
+  }
+  
+  // OpenAI Search (Original logic)
+  
+  // OpenAI Search
   const prompt = 
     `Find direct product listing URLs for "${query}" on Alibaba.com and Made-in-China.com. ` +
     `I need at least 20 specific product links. ` +
@@ -192,10 +235,8 @@ const runHarvesterAgent = async (runOpenAI: any, query: string): Promise<CsvItem
   const onPartial = (text: string) => {
     const fresh = extractLinks(text);
     if (fresh.length > currentLinks.length) {
-      // Only log full new links
       for (let i = currentLinks.length; i < fresh.length; i++) {
         const link = fresh[i];
-        // Ensure link doesn't look like a stub (e.g. just "https://www.alibaba.com/product-detail")
         if (link.length > 40) {
           const time = new Date().toLocaleTimeString('ru-RU', { hour12: false });
           console.log(`[${time} STREAM] Found link #${i + 1}: ${link}`);
@@ -209,7 +250,6 @@ const runHarvesterAgent = async (runOpenAI: any, query: string): Promise<CsvItem
     const data = await runOpenAI(payload, onPartial);
     const content = getResponseText(data);
     
-    // DEBUG: see what the model actually says
     if (content.length > 0) {
       console.log(`[Harvester] Raw output length: ${content.length}`);
       if (extractLinks(content).length === 0) {
@@ -251,7 +291,7 @@ const runScreenerAgent = (items: CsvItem[]): CsvItem[] => {
   return result;
 };
 
-const runAnalystAgent = async (runOpenAI: any, candidates: CsvItem[], query: string, mode: "preview" | "full"): Promise<any> => {
+const runAnalystAgent = async (runOpenAI: any, runGemini: any, candidates: CsvItem[], query: string, mode: "preview" | "full", googleConfig: GoogleConfig): Promise<any> => {
   if (!candidates.length) return null;
   const subset = candidates.slice(0, mode === "preview" ? 20 : 40);
   const dataBlock = subset.map(i => `URL: ${i.link}`).join("\n");
@@ -262,6 +302,7 @@ const runAnalystAgent = async (runOpenAI: any, candidates: CsvItem[], query: str
   ${dataBlock}
   
   Identify TOP 10 BEST items. ${mode === 'full' ? 'Provide deep risk assessment.' : ''}
+  IMPORTANT: Each item MUST use the EXACT URL from the Candidates list above. DO NOT invent URLs or use placeholders like "[URL]".
   Format: JSON only.
   {
     "summary": "Russian summary of the market situation",
@@ -280,13 +321,54 @@ const runAnalystAgent = async (runOpenAI: any, candidates: CsvItem[], query: str
   }`;
 
   try {
-    const data = await runOpenAI({
-      model: P3_BASE_MODEL,
-      input: prompt,
-      response_format: { type: "json_object" }
-    });
-    const candidateJson = extractJsonCandidate(getResponseText(data));
-    return candidateJson ? JSON.parse(candidateJson) : null;
+    let responseText = '';
+    
+    // Gemini Fallback
+    if (!googleConfig.hasOpenAI && googleConfig.hasGemini) {
+      console.log('[Analyst] Using Google Gemini');
+      const geminiResponse = await runGemini(prompt, { type: 'json_object' });
+      responseText = getResponseText(geminiResponse);
+    } else {
+      // OpenAI
+      const data = await runOpenAI({
+        model: P3_BASE_MODEL,
+        input: prompt,
+        response_format: { type: "json_object" }
+      });
+      responseText = getResponseText(data);
+    }
+    
+    const candidateJson = extractJsonCandidate(responseText);
+    let parsed = candidateJson ? JSON.parse(candidateJson) : null;
+
+    // Link Restoration Logic: Prohibit hallucinations
+    if (parsed && parsed.items) {
+      console.log(`[Analyst Debug] Validating ${parsed.items.length} items against candidates...`);
+      const approvedLinks = new Set(candidates.map(c => c.link));
+      
+      parsed.items = parsed.items.map((item: any, idx: number) => {
+        const originalUrl = item.link;
+        // Check if link is known or a hallucination
+        if (!approvedLinks.has(item.link)) {
+          // Model hallucinated a link. Match by name to original.
+          const match = candidates.find(c => 
+            (item.name && c.name.toLowerCase().includes(item.name.toLowerCase().slice(0, 15))) ||
+            (c.name && item.name.toLowerCase().includes(c.name.toLowerCase().slice(0, 15)))
+          );
+          
+          if (match) {
+            item.link = match.link;
+            console.log(`  Item ${idx + 1}: Hallucinated link replaced with real URL. (\n    AI: ${originalUrl}\n    Real: ${item.link}\n  )`);
+          } else {
+            console.warn(`  Item ${idx + 1}: Hallucinated link detected but NO MATCH found for "${item.name}".`);
+          }
+        }
+        return item;
+      });
+    }
+
+    trace("Analyst Output", JSON.stringify(parsed?.items?.map((p: any) => ({ name: p.name, link: p.link })), null, 2));
+    return parsed;
   } catch (e) {
     console.error("Analyst failed", e);
     return null;
@@ -295,14 +377,91 @@ const runAnalystAgent = async (runOpenAI: any, candidates: CsvItem[], query: str
 
 // --- HANDLER ---
 
+type GoogleConfig = {
+  hasOpenAI: boolean;
+  hasGoogleSearch: boolean;
+  hasGemini: boolean;
+  googleSearchKey?: string;
+  googleSearchCx?: string;
+  geminiModel?: string;
+};
+
 export async function chatHandler(
   payload: ChatRequest, 
   authHeader: string, 
   supabaseAdmin: SupabaseClient, 
-  runOpenAI: any,
+  rawRunOpenAI: any,
+  rawRunGemini: any,
+  rawRunGeminiSearch: any,
   supabaseUrl: string,
-  supabaseAnonKey: string
+  supabaseAnonKey: string,
+  googleConfig: GoogleConfig
 ): Promise<ChatHandlerResult> {
+  const calculateGeminiCost = (model: string, usage: any) => {
+    if (!usage) return 0;
+    
+    // Choose pricing based on model name
+    const isPro = model.toLowerCase().includes('pro');
+    const pricing = isPro ? GEMINI_2_5_PRO_PRICING : GEMINI_2_5_FLASH_PRICING;
+    
+    const promptTokens = usage.prompt_tokens || 0;
+    const completionTokens = usage.completion_tokens || 0;
+    const totalTokens = usage.total_tokens || (promptTokens + completionTokens);
+
+    // For Pro, price changes after 200k tokens
+    const isLarge = totalTokens > 200000;
+    
+    let cost = 0;
+    if (isPro) {
+      const inputRate = isLarge ? GEMINI_2_5_PRO_PRICING.input_large : GEMINI_2_5_PRO_PRICING.input;
+      const outputRate = isLarge ? GEMINI_2_5_PRO_PRICING.output_large : GEMINI_2_5_PRO_PRICING.output;
+      cost = (promptTokens * inputRate) / 1000000 + (completionTokens * outputRate) / 1000000;
+    } else {
+      cost = (promptTokens * GEMINI_2_5_FLASH_PRICING.input) / 1000000 + (completionTokens * GEMINI_2_5_FLASH_PRICING.output) / 1000000;
+    }
+    
+    return cost;
+  };
+
+  let totalTokens = 0;
+  let totalCost = 0;
+
+  const runOpenAI = async (p: any, onPartial?: (c: string) => void) => {
+    const res = await rawRunOpenAI(p, onPartial);
+    const usage = (res as any).usage;
+    if (usage) {
+      const tokens = usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0));
+      const cost = calculateCost(p.model || P3_BASE_MODEL, usage);
+      totalTokens += tokens;
+      totalCost += cost;
+    }
+    return res;
+  };
+
+  const runGemini = async (prompt: string, responseFormat?: { type: string }) => {
+    const res = await rawRunGemini(prompt, responseFormat);
+    const usage = (res as any).usage;
+    if (usage) {
+      const tokens = usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0));
+      const cost = calculateGeminiCost(googleConfig.geminiModel || 'gemini-1.5-pro', usage);
+      totalTokens += tokens;
+      totalCost += cost;
+    }
+    return res;
+  };
+
+  const runGeminiSearch = async (query: string) => {
+    const res = await rawRunGeminiSearch(query);
+    const usage = (res as any).usage;
+    if (usage) {
+      const tokens = usage.total_tokens || 0;
+      const cost = calculateGeminiCost(googleConfig.geminiModel || 'gemini-1.5-pro', usage);
+      totalTokens += tokens;
+      totalCost += cost;
+    }
+    return res;
+  };
+
   const token = authHeader.replace('Bearer ', '').trim();
   if (!token) return { status: 401, body: { ok: false, message: 'Unauthorized' }};
 
@@ -325,6 +484,9 @@ export async function chatHandler(
 
       if (confirmId === "p3_rfq_v1") {
         const { data: bal, error: balErr } = await supabaseAdmin.rpc("tc_get_balance", { p_user_id: user.id });
+        if (balErr) console.error("[TC CHECK ERROR]", balErr);
+        console.log(`[TC DEBUG] Raw balance response for ${user.id}:`, JSON.stringify(bal));
+
         const balance = Array.isArray(bal) ? bal[0]?.balance_total : (bal?.balance_total ?? (typeof bal === 'number' ? bal : 0));
         console.log(`[TC CHECK] User: ${user.id}, Balance: ${balance}, Required: ${P3_RFQ_TC}`);
         
@@ -336,6 +498,9 @@ export async function chatHandler(
 
       if (confirmId === "p3_full_analysis" || confirmId === "p3_full_v1") {
         const { data: bal, error: balErr } = await supabaseAdmin.rpc("tc_get_balance", { p_user_id: user.id });
+        if (balErr) console.error("[TC CHECK ERROR]", balErr);
+        console.log(`[TC DEBUG] Raw balance response for ${user.id}:`, JSON.stringify(bal));
+
         const balance = Array.isArray(bal) ? bal[0]?.balance_total : (bal?.balance_total ?? (typeof bal === 'number' ? bal : 0));
         console.log(`[TC CHECK] User: ${user.id}, Balance: ${balance}, Required: ${P3_FULL_TC}`);
 
@@ -357,7 +522,7 @@ export async function chatHandler(
         }
 
         if (targetLinks.length === 0) {
-           const raw = await runHarvesterAgent(runOpenAI, query);
+           const raw = await runHarvesterAgent(runOpenAI, runGeminiSearch, query, googleConfig);
            targetLinks = runScreenerAgent(raw);
         }
 
@@ -369,7 +534,7 @@ export async function chatHandler(
         
         await supabaseAdmin.rpc("tc_apply_debit", { p_user_id: user.id, p_amount: P3_FULL_TC, p_ref_id: order.id, p_reason: "P3 Full Supplier Report" });
         
-        const analyzed = await runAnalystAgent(runOpenAI, targetLinks, query, "full");
+        const analyzed = await runAnalystAgent(runOpenAI, runGemini, targetLinks, query, "full", googleConfig);
         
         if (analyzed) {
           await supabaseAdmin.from("reports").insert({ 
@@ -393,7 +558,7 @@ export async function chatHandler(
       if (!query) return { status: 200, body: { ok: true, message: "Опишите товар.", suggested_chips: [{ id: "t", label: "Шаблон", action: "insert", payload: SUPPLIER_INTAKE_TEMPLATE }] } };
       
       const startTime = Date.now();
-      const rawLinks = await runHarvesterAgent(runOpenAI, query);
+      const rawLinks = await runHarvesterAgent(runOpenAI, runGeminiSearch, query, googleConfig);
       const uniqueLinks = runScreenerAgent(rawLinks);
       
       const { data: sSearch } = await supabaseAdmin.from("supplier_searches").insert({ 
@@ -401,7 +566,7 @@ export async function chatHandler(
         search_meta: { total_links_found: uniqueLinks.length, raw_links: uniqueLinks.map(l => l.link) }
       }).select("id").single();
 
-      const analyzed = await runAnalystAgent(runOpenAI, uniqueLinks, query, "preview");
+      const analyzed = await runAnalystAgent(runOpenAI, runGemini, uniqueLinks, query, "preview", googleConfig);
       
       if (!analyzed || !analyzed.items || analyzed.items.length === 0) {
         return { status: 200, body: { ok: true, message: "Не найдено товаров по запросу." } };
@@ -418,7 +583,7 @@ export async function chatHandler(
         response: message, 
         ui_hints: { 
           progress_state: "shortlist", 
-          requires_confirm: true, 
+          // requires_confirm removed to let user see cards first
           confirm_action_id: "p3_full_analysis" 
         },
         suggested_chips: [
@@ -453,5 +618,9 @@ export async function chatHandler(
   } catch (err) {
     console.error("Handler Error:", err);
     return { status: 502, body: { ok: false, message: "Internal Error" } };
+  } finally {
+    if (totalTokens > 0) {
+      console.log(`\n[GRAND TOTAL] Tokens: ${totalTokens}, Cost: $${totalCost.toFixed(6)}`);
+    }
   }
 }

@@ -1,8 +1,14 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
-import { OPENAI_API_KEY, P3_SEARCH_MODEL, P3_BASE_MODEL, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, PORT } from './config.js';
+import { 
+  OPENAI_API_KEY, P3_SEARCH_MODEL, P3_BASE_MODEL, 
+  SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, 
+  PORT,
+  GOOGLE_SEARCH_API_KEY, GOOGLE_SEARCH_CX, GOOGLE_GEMINI_KEY, GEMINI_MODEL
+} from './config.js';
 import { createOpenAIClient } from './openai.js';
+import { createGoogleAIClient } from './google-ai.js';
 import { chatHandler } from './chat-handler.js';
 
 const app = express();
@@ -28,10 +34,18 @@ app.get('/health', async (req: Request, res: Response) => {
 // Chat handler endpoint
 app.post('/chat', async (req: Request, res: Response) => {
   try {
-    // Validate API keys
-    if (!OPENAI_API_KEY) {
-      return res.status(500).json({ ok: false, message: 'Missing OPENAI_API_KEY' });
+    // Validate API keys - require either OpenAI OR Google stack
+    const hasOpenAI = !!OPENAI_API_KEY;
+    const hasGoogleSearch = !!(GOOGLE_SEARCH_API_KEY && GOOGLE_SEARCH_CX);
+    const hasGemini = !!GOOGLE_GEMINI_KEY;
+    
+    if (!hasOpenAI && !hasGoogleSearch && !hasGemini) {
+      return res.status(500).json({ 
+        ok: false, 
+        message: 'Missing API keys: Configure either OPENAI_API_KEY, (GOOGLE_SEARCH_API_KEY + GOOGLE_SEARCH_CX), or GOOGLE_GEMINI_KEY' 
+      });
     }
+    
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_ANON_KEY) {
       return res.status(500).json({ ok: false, message: 'Missing Supabase configuration' });
     }
@@ -41,11 +55,28 @@ app.post('/chat', async (req: Request, res: Response) => {
       auth: { persistSession: false, autoRefreshToken: false }
     });
     
-    // We'll use the admin client for DB and the anon key for token verification if needed
-    // Actually, passing them to chatHandler is cleaner
+    // Create AI clients
     const { runOpenAI } = createOpenAIClient(OPENAI_API_KEY);
+    const { runGemini, runGeminiSearch } = createGoogleAIClient(GOOGLE_GEMINI_KEY);
 
-    const result = await chatHandler(req.body, req.headers.authorization || '', supabaseAdmin, runOpenAI, SUPABASE_URL, SUPABASE_ANON_KEY);
+    const result = await chatHandler(
+      req.body, 
+      req.headers.authorization || '', 
+      supabaseAdmin, 
+      runOpenAI,
+      runGemini,
+      runGeminiSearch,
+      SUPABASE_URL, 
+      SUPABASE_ANON_KEY,
+      {
+        hasOpenAI,
+        hasGoogleSearch,
+        hasGemini,
+        googleSearchKey: GOOGLE_SEARCH_API_KEY,
+        googleSearchCx: GOOGLE_SEARCH_CX,
+        geminiModel: GEMINI_MODEL
+      }
+    );
     
     res.status(result.status || 200).json(result.body);
   } catch (error) {
