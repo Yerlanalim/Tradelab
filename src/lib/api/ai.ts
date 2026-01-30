@@ -39,6 +39,8 @@ type ChatRequest = {
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+// Local backend URL (for development, to avoid 60s timeout)
+const localBackendUrl = process.env.NEXT_PUBLIC_LOCAL_BACKEND_URL ?? "";
 
 const getAccessToken = async () => {
   const { data: sessionData } = await supabaseClient.auth.getSession();
@@ -57,13 +59,25 @@ const invokeChatHandler = async (
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error("Supabase env is not configured");
   }
-  const response = await fetch(`${supabaseUrl}/functions/v1/chat_handler`, {
+  
+  // Use local backend if configured, otherwise fall back to Edge Function
+  const endpoint = localBackendUrl 
+    ? `${localBackendUrl}/chat`
+    : `${supabaseUrl}/functions/v1/chat_handler`;
+  
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  
+  // Only add apikey header for Supabase Edge Function
+  if (!localBackendUrl) {
+    headers.apikey = supabaseAnonKey;
+  }
+  
+  const response = await fetch(endpoint, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      apikey: supabaseAnonKey,
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify(payload),
   });
   if (response.status === 504) {

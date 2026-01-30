@@ -7,6 +7,7 @@
 ## 1) Технологический стек
 
 ### Frontend
+
 - Next.js 14 (App Router)
 - React 18 + TypeScript
 - Tailwind CSS
@@ -16,23 +17,27 @@
 - Recharts или Tremor (дашборды/аналитика)
 
 ### Backend
+
 - Supabase (Postgres, Auth, Storage, Edge Functions)
 - Supabase Edge Functions (Deno runtime)
 - pg_trgm + full-text search (поиск)
 - pg_net/pg_cron (по необходимости для фоновых задач)
 
 ### AI/LLM
-- OpenAI GPT-4o/mini
+
+- OpenAI GPT-5.2-mini
 - Промпты по разделам (контекстный бот)
 - Логика "evidence-first + human-in-the-loop"
 
 ### Инфраструктура
+
 - Vercel (хостинг фронта)
 - Supabase (все данные, API, фоновые задачи)
 - Sentry + Vercel Analytics (наблюдаемость)
 - Upstash QStash (очереди/фоновая обработка, если нагрузка растет)
 
 ### Платежи
+
 - Halyk ePay (KZT)
 
 ## 2) Архитектурные принципы
@@ -49,17 +54,20 @@
 ## 3) Основные домены и модули
 
 ### 3.1. Пользователи и доступ
+
 - Аутентификация: Supabase Auth (email + OAuth).
 - Роли: user, admin, analyst.
 - Профиль пользователя: страна, валюта, язык, тариф.
 
 ### 3.2. Продукты (P1-P4)
+
 1. P1 — Проверка компании (QCC)
 2. P2 — Экспортный профиль (Tendata)
 3. P3 — Поиск поставщиков (LLM web search)
 4. P4 — Анализ рынка KZ (Tendata)
 
 Каждый продукт:
+
 - Input через conversational form
 - Валидация параметров
 - Запуск edge function
@@ -67,28 +75,33 @@
 - Сохранение агрегатов в data-layer
 
 ### 3.3. Бесплатные инструменты
+
 - Калькулятор landed cost (Xport-бот)
 - HS-код определитель
 - Бот оценки рисков сделки
 
 ### 3.4. AI-чат
+
 - Единый бот с режимами (Assistant / Supplier Search / Report).
 - Таблица chat_history:
   - id, user_id, section, messages, created_at, updated_at
 - История доступна пользователю.
 
 ### 3.5. Data-layer (Supplier ID)
+
 - USCC = canonical ID.
 - Tendata match к USCC.
 - Web search match через ссылку и вероятностный матч.
 - Храним признаки, а не сырые записи.
 
 ### 3.6. Отчеты и PDF
+
 - Веб-отчет: React/Next (SSR + CSR).
 - PDF: React-PDF или генерация через edge function.
 - PDF хранится в Supabase Storage.
 
 ### 3.7. Контентные разделы
+
 - Карта производителей
 - Библиотека
 - Торговые зоны и хабы
@@ -134,12 +147,14 @@
 ## 5) Таблицы Supabase (ядро)
 
 ### users
+
 - id (uuid)
 - email
 - role
 - created_at
 
 ### user_profiles
+
 - user_id
 - country
 - currency
@@ -147,6 +162,7 @@
 - company_name
 
 ### orders
+
 - id
 - user_id
 - product_type (p1|p2|p3|p4|bundle)
@@ -157,6 +173,7 @@
 - created_at
 
 ### reports
+
 - id
 - order_id
 - product_type
@@ -167,6 +184,7 @@
 - created_at
 
 ### report_jobs
+
 - id
 - order_id
 - status (queued|running|done|failed)
@@ -175,6 +193,7 @@
 - created_at
 
 ### supplier_entities
+
 - id (canonical)
 - uscc
 - name_en
@@ -183,11 +202,13 @@
 - created_at
 
 ### supplier_features
+
 - supplier_id
 - features (jsonb)
 - updated_at
 
 ### supplier_matches
+
 - id
 - supplier_id
 - source (tendata|web_search)
@@ -196,6 +217,7 @@
 - created_at
 
 ### chat_history
+
 - id
 - user_id
 - section
@@ -204,6 +226,7 @@
 - updated_at
 
 ### payments
+
 - id
 - order_id
 - provider (halyk)
@@ -214,6 +237,7 @@
 - created_at
 
 ### api_usage
+
 - id
 - provider (tendata|qcc|web_search|openai)
 - user_id
@@ -222,6 +246,7 @@
 - created_at
 
 ### content_items
+
 - id
 - type (map|library|zone|exhibition)
 - title
@@ -232,34 +257,41 @@
 ## 6) Supabase Edge Functions (ключевые)
 
 ### 6.1. auth
+
 - validate session
 - role enforcement
 
 ### 6.2. tendata_proxy
+
 - Получение access token.
 - Выполнение trade/company запросов.
 - Преобразование в внутренние форматы.
 - Ретрай + backoff при 429.
 
 ### 6.3. qcc_proxy
+
 - Поиск по USCC.
 - Получение регистрационных данных.
 
 ### 6.4. chat_handler
+
 - Единая точка входа для чат-бота с режимами.
 - Определение mode по page_context и возврат ui_hints.
 
 ### 6.5. report_generator
+
 - Компоновка отчета.
 - Расчет агрегатов.
 - Сохранение PDF в Storage.
 
 ### 6.6. ai_orchestrator
+
 - Conversational form.
 - Проверка параметров.
 - Prompt per section.
 
 ### 6.7. payment_webhook
+
 - Прием вебхуков оплаты.
 - Подтверждение статуса платежа.
 - Перевод заказа в processing.
@@ -267,30 +299,35 @@
 ## 7) Потоки данных (основные сценарии)
 
 ### P1: Проверка компании
+
 1. Пользователь вводит USCC.
 2. Edge function qcc_proxy получает данные.
 3. report_generator формирует отчет.
 4. Итог → web + PDF, сохраняется в reports.
 
 ### P2: Экспортный профиль
+
 1. Ввод USCC или имени.
 2. tendata_proxy → trade данные.
 3. Вычисление признаков: HS-match, динамика, география.
 4. report_generator сохраняет отчет.
 
 ### P3: Поиск поставщиков
+
 1. Пользователь описывает товар + HS.
 2. LLM web search → список поставщиков.
 3. Фильтрация + benchmark.
 4. Сохранение short list.
 
 ### P4: Анализ рынка KZ
+
 1. Ввод HS + период.
 2. tendata_proxy → trade data.
 3. Аггрегация: объем, экспортёры, сезонность.
 4. report_generator сохраняет отчет.
 
 ### Free tools
+
 1. HS-бот: AI → предложенные HS-коды → пользователь подтверждает.
 2. Risk-бот: опросник → карта рисков + рекомендации.
 3. Landed cost: расчет через Xport-логики + дисклеймер.

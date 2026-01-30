@@ -41,3 +41,11 @@ yarn-error.log*
 next-env.d.ts
 .env*.local
 supabase/.temp/
+
+# backend
+/backend/dist
+/backend/node_modules
+**/*.log
+
+# agent
+.antigravity/

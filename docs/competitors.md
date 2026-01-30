@@ -274,7 +274,7 @@
 |----------|------------|
 | **Запуск** | Ноябрь 2024 |
 | **Владелец** | Alibaba International Digital Commerce Group |
-| **Модели AI** | DeepSeek-R1, GPT-4o, Qwen3 |
+| **Модели AI** | DeepSeek-R1, GPT-5-mini, Qwen3 |
 | **Статус** | 500,000+ SME users (январь 2025) |
 
 **Основные продукты:**

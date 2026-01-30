@@ -511,6 +511,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
       });
       if (response.ok && (response.response || response.message)) {
         const assistantText = response.response ?? response.message ?? "Нет ответа.";
+        const uiHints = response.ui_hints as any;
         const meta: ChatMeta = {
           tool_calls: (response.tool_calls as Record<string, unknown>[] | undefined) ?? null,
           entities: (response.entities as Record<string, unknown> | null | undefined) ?? null,
@@ -532,7 +533,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
           mode === "supplier_search"
             ? {
                 step:
-                  (response.ui_hints as { progress_state?: string } | undefined)?.progress_state ??
+                  uiHints?.progress_state ??
                   (flowState?.step as string | undefined) ??
                   "discovery",
                 query: resolvedQuery,
@@ -544,8 +545,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
                 updated_at: new Date().toISOString(),
               }
             : null;
-        const progressState = (response.ui_hints as { progress_state?: string } | undefined)
-          ?.progress_state;
+        const progressState = uiHints?.progress_state;
         if (mode === "supplier_search" && progressState === "analysis") {
           dispatchTcBalanceUpdate();
         }
@@ -555,8 +555,17 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
         ];
         setMessages(updatedMessages);
         setFlowState(nextFlowState);
-        const redirectHint = (response.ui_hints as { redirect_to?: string } | undefined)?.redirect_to;
-        const chips = response.suggested_chips ?? [];
+
+        if (uiHints?.requires_confirm && uiHints.confirm_action_id) {
+          handleChipAction({
+            label: "Подтвердить",
+            action: "confirm",
+            payload: uiHints.confirm_action_id,
+          });
+        }
+
+        const redirectHint = uiHints?.redirect_to;
+        const chips = (response.suggested_chips as any[]) ?? [];
         const supplierEntities = response.entities as
           | {
               result_scope?: "preview" | "full";
@@ -601,7 +610,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
                   id: "redirect-hint",
                   label: "Открыть поиск поставщиков",
                   action: "redirect",
-                  payload: redirectHint,
+                  payload: redirectHint ?? "",
                 },
               ]
         );
@@ -642,6 +651,8 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
   };
 
   const handleChipAction = (chip: {
+    id?: string;
+    label?: string;
     action: ChipAction;
     payload: string;
   }) => {
@@ -650,7 +661,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
       return;
     }
     if (chip.action === "confirm") {
-      const requiresPayment = chip.payload === "p3_full_v1";
+      const requiresPayment = chip.payload === "p3_full_v1" || chip.payload === "p3_full_analysis";
       setPendingConfirm({
         actionId: chip.payload,
         message: requiresPayment
