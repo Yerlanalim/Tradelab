@@ -40,6 +40,7 @@ export type CsvItem = {
   name: string;
   link: string;
   platform: string;
+  snippet?: string;
 };
 
 // --- CONSTANTS ---
@@ -52,7 +53,7 @@ const SUPPLIER_INTAKE_TEMPLATE =
   "Товар: ...\n" +
   "Материалы/спецификации: ...\n" +
   "MOQ: ...\n" +
-  "Бюджет/цена за штуку: ... (в USD)\n" +
+  "Бюджет/цена за штуку (в USD): ... (в USD)\n" +
   "Регион/город в Китае: ...\n" +
   "Сроки поставки: ...";
 
@@ -160,19 +161,24 @@ const formatSupplierFull = (analyzed: any, items: any[]) => {
     const riskIcon = item.risk_level === "low" ? "🟢" : item.risk_level === "medium" ? "🟡" : "🔴";
     const riskText = item.risk_level === "low" ? "Низкий риск" : item.risk_level === "medium" ? "Средний риск" : "Высокий риск";
     
-    return `### ${index + 1}. ${item.name || 'Поставщик'}\n` +
+    return `### 📦 ${index + 1}. ${item.name || 'Поставщик'}\n\n` +
            `**Статус:** ${riskIcon} ${riskText}\n` +
-           `💰 **Цена:** ${item.price_range || 'по запросу'} | 📦 **MOQ:** ${item.moq || 'N/A'}\n` +
-           `📍 **Локация:** ${item.location || 'Китай'} | 🏷️ **Платформа:** ${item.platform}\n` +
-           `⚠️ **Факторы риска:** ${item.risk_factors ? item.risk_factors.join(', ') : 'Не обнаружены'}\n` +
-           `🔗 [Посмотреть на сайте](${item.link})\n` +
-           `---`;
-  }).join("\n\n");
+           `💰 **Цена:** \`${item.price_range || 'по запросу'}\` | 📦 **MOQ:** \`${item.moq || 'N/A'}\`\n` +
+           `📍 **Локация:** ${item.location || 'Китай'} | 🏷️ **Платформа:** ${item.platform}\n\n` +
+           `⚠️ **Факторы риска:** ${item.risk_factors ? item.risk_factors.join(', ') : 'Не обнаружены'}\n\n` +
+           `🔗 [Перейти к товару](${item.link})\n` +
+           `\n---\n`;
+  }).join("\n");
 
-  return `## 📜 Полный отчет по поиску поставщиков\n\n` + 
-         `> **Запрос:** ${analyzed.summary || 'Анализ завершен'}\n\n` +
+  const summaryText = analyzed.summary 
+    ? analyzed.summary.split('\n').map((line: string) => line.trim()).filter(Boolean).join('\n\n')
+    : 'Анализ завершен успешно.';
+
+  return `## 📜 Отчёт по поиску поставщиков\n\n` + 
+         `### 📝 Сводка анализа\n${summaryText}\n\n` +
+         `### 🔍 Топ найденных позиций\n\n` +
          cards + 
-         `\n\n**Итоговая рекомендация:** Исходя из анализа ${items.length} источников, мы рекомендуем обратить внимание на ТОП-3 поставщиков с зеленым маркером.`;
+         `\n\n**Итоговая рекомендация:** Проанализировано ${items.length} источников. Рекомендуем начать общение с поставщиков, помеченных зеленым маркером 🟢.`;
 };
 
 // --- AGENTS ---
@@ -193,13 +199,24 @@ const runHarvesterAgent = async (runOpenAI: any, runGeminiSearch: any, runSerper
         cleanQuery = query.replace(/^Товар:\s*/i, '').split(/[МM]OQ|Бюджет|Сроки/)[0].trim().slice(0, 100);
       }
       
-      const items = await runSerperSearch(cleanQuery);
+      console.log('[Harvester] Running multi-platform Serper Search (4 threads)');
+      const sites = ['alibaba.com', 'made-in-china.com'];
+      const searchTasks: Promise<CsvItem[]>[] = [];
       
-      if (items && Array.isArray(items) && items.length > 0) {
-        trace("Harvester Final (Serper)", items.length);
+      sites.forEach(site => {
+        // Page 1 and 2 for each site to get 40 items total from each platform
+        searchTasks.push(runSerperSearch(cleanQuery, site, 1));
+        searchTasks.push(runSerperSearch(cleanQuery, site, 2));
+      });
+      
+      const resultsArray = await Promise.all(searchTasks);
+      const items = resultsArray.flat();
+      
+      if (items && items.length > 0) {
+        trace("Harvester Final (Multi-Serper)", items.length);
         return items;
       }
-      console.log('[Harvester] Serper returned 0 product links, checking fallback options...');
+      console.log('[Harvester] Multi-Serper returned 0 results, checking fallback options...');
     } catch (error) {
       console.error('[Harvester] Serper Search failed:', error);
     }
@@ -319,7 +336,12 @@ const runScreenerAgent = (items: CsvItem[]): CsvItem[] => {
 const runAnalystAgent = async (runOpenAI: any, runGemini: any, candidates: CsvItem[], query: string, mode: "preview" | "full", googleConfig: GoogleConfig): Promise<any> => {
   if (!candidates.length) return null;
   const subset = candidates.slice(0, mode === "preview" ? 20 : 40);
-  const dataBlock = subset.map(i => `URL: ${i.link}`).join("\n");
+  const dataBlock = subset.map((i, idx) => 
+    `#${idx + 1}\n` +
+    `Name: ${i.name}\n` + 
+    `URL: ${i.link}\n` + 
+    `Snippet: ${i.snippet || 'No description'}\n`
+  ).join("\n---\n");
   const prompt = `Procurement Analyst. Target: "${query}".
   Mode: ${mode === "preview" ? "Preview (Quick scan)" : "FULL REPORT (Detailed analysis)"}.
   
@@ -489,8 +511,8 @@ export async function chatHandler(
     return res;
   };
 
-  const runSerperSearch = async (query: string) => {
-    const res = await rawRunSerperSearch(query);
+  const runSerperSearch = async (query: string, site?: string, page: number = 1) => {
+    const res = await rawRunSerperSearch(query, site, page);
     return res;
   };
 
@@ -592,18 +614,35 @@ export async function chatHandler(
         const analyzed = await runAnalystAgent(runOpenAI, runGemini, targetLinks, query, "full", googleConfig);
         
         if (analyzed) {
-          await supabaseAdmin.from("reports").insert({ 
+          const reportSummary = {
+            ...analyzed,
+            query,
+            stats: {
+              totalFound: targetLinks.length,
+              finalCount: analyzed.items.length
+            },
+            source: "LLM Web Search (Alibaba & Made-in-China)",
+            platform_counts: {
+              alibaba: targetLinks.filter((l: any) => l.platform === "Alibaba").length,
+              mic: targetLinks.filter((l: any) => l.platform === "Made-in-China").length
+            }
+          };
+
+          const { data: report } = await supabaseAdmin.from("reports").insert({ 
             order_id: order.id, user_id: user.id, product_type: "p3", status: "ready", 
-            result_summary: analyzed 
-          });
+            result_summary: reportSummary 
+          }).select("id").single();
+          
           await supabaseAdmin.from("orders").update({ status: "done" }).eq("id", order.id);
-          const txt = formatSupplierFull(analyzed, analyzed.items);
+          const txt = formatSupplierFull(reportSummary, analyzed.items);
           return { status: 200, body: { ok: true, message: txt, response: txt, entities: { 
             query, 
-            report_id: order.id, 
+            report_id: report?.id || order.id, 
             result_scope: "full", 
             result_items: analyzed.items,
-            final_count: analyzed.items.length
+            final_count: analyzed.items.length,
+            total_found: targetLinks.length,
+            source_counts: reportSummary.platform_counts
           } } };
         }
         return { status: 500, body: { ok: false, message: "Ошибка анализа. Пожалуйста, попробуйте позже." } };

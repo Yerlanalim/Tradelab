@@ -108,18 +108,18 @@ export const createGoogleAIClient = (apiKey?: string) => {
     snippet: string;
   };
 
-  const runSerperSearch = async (query: string): Promise<any> => {
+  const runSerperSearch = async (query: string, site?: string, page: number = 1): Promise<any> => {
     const serperKey = process.env.SERPER_API_KEY || SERPER_API_KEY;
     if (!serperKey) {
       console.error("[Serper] Missing API Key");
       return [];
     }
 
-    const siteFilter = "(site:alibaba.com OR site:made-in-china.com)";
+    const siteFilter = site ? `site:${site}` : "(site:alibaba.com OR site:made-in-china.com)";
     const cleanQuery = query.replace("site:alibaba.com", "").replace("site:made-in-china.com", "").trim();
     const finalQuery = `${cleanQuery} ${siteFilter}`;
 
-    console.log(`[Serper] Requesting: ${finalQuery}`);
+    console.log(`[Serper] Requesting (Page ${page}): ${finalQuery}`);
 
     const url = 'https://google.serper.dev/search';
     
@@ -132,7 +132,8 @@ export const createGoogleAIClient = (apiKey?: string) => {
         },
         body: JSON.stringify({
           q: finalQuery,
-          num: 20,
+          num: 20, // Keep 20 to avoid "Query not allowed" error
+          page: page,
           gl: "us",
           hl: "en"
         })
@@ -140,7 +141,8 @@ export const createGoogleAIClient = (apiKey?: string) => {
       
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Serper API error: ${response.status} ${errorText}`);
+        console.warn(`[Serper] API error on page ${page}: ${response.status} ${errorText}`);
+        return [];
       }
 
       const data = await response.json();
@@ -158,7 +160,6 @@ export const createGoogleAIClient = (apiKey?: string) => {
           platform: item.link.includes("alibaba") ? "Alibaba" : "Made-in-China"
         }));
 
-      console.log(`[Serper] Success. Found ${items.length} items.`);
       return items;
 
     } catch (error) {

@@ -4,6 +4,8 @@ import { Send, Sparkles, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { Button } from "@/components/ui/Button";
 import { Table } from "@/components/ui/Table";
@@ -156,6 +158,7 @@ type SupplierResultState = {
   sourceCounts?: { alibaba: number; mic: number } | null;
   reportId?: string | null;
   previewCount?: number | null;
+  summary?: string | null;
 };
 
 type ChipAction = "redirect" | "insert" | "confirm";
@@ -301,7 +304,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
       `Товар: ${intake.product || "—"}`,
       `Материалы/спецификации: ${intake.specs || "—"}`,
       `MOQ: ${intake.moq || "—"}`,
-      `Бюджет/цена за штуку: ${intake.budget || "—"}`,
+      `Бюджет/цена за штуку (в USD): ${intake.budget || "—"}`,
       `Регион/город в Китае: ${intake.region || "—"}`,
       `Сроки поставки: ${intake.leadTime || "—"}`,
     ].join("\n");
@@ -336,6 +339,143 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
     };
   }, [confirmOpen, pendingConfirm?.requiresPayment]);
 
+  // --- SESSION CONTROLS ---
+
+  const startNewChat = () => {
+    setMessages([]);
+    setHistoryId(null);
+    setIsArchiveView(false);
+    setErrorMessage(null);
+    setSuggestedChips([]);
+    setFlowState(null);
+    setConfirmOpen(false);
+    setPendingConfirm(null);
+    setSupplierResult(null);
+  };
+
+  const openHistory = (history: ChatHistory) => {
+    setMessages(history.messages ?? []);
+    setHistoryId(history.id);
+    setIsArchiveView(false); // Changed to false to allow continuation
+    setErrorMessage(null);
+    setSuggestedChips([]);
+    setFlowState(normalizeFlowState(history.flow_state ?? null));
+    setConfirmOpen(false);
+    setPendingConfirm(null);
+
+    // Restore supplier result from entities
+    const ent = history.entities as any;
+    if (ent?.result_items && Array.isArray(ent.result_items) && ent.result_items.length > 0) {
+      setSupplierResult({
+        scope: ent.result_scope || "preview",
+        items: ent.result_items,
+        bench: ent.bench ?? null,
+        limitations: ent.limitations ?? null,
+        foundCount: ent.found_count ?? null,
+        totalFound: ent.total_found ?? null,
+        dedupedCount: ent.deduped_count ?? null,
+        finalCount: ent.final_count ?? null,
+        sourceCounts: ent.source_counts ?? null,
+        reportId: ent.report_id ?? null,
+        previewCount: ent.preview_count ?? null,
+        summary: history.summary ?? ent.summary ?? null,
+      });
+    } else {
+      setSupplierResult(null);
+    }
+  };
+
+  const persistChat = async (
+    nextMessages: Message[],
+    nextFlowState: Record<string, unknown> | null,
+    meta?: ChatMeta
+  ) => {
+    if (!user) return;
+    const trimmedMessages = trimMessages(nextMessages);
+    const lastMessageAt = new Date().toISOString();
+    
+    // Use functional update to avoid stale closures
+    let finalizedEntities: any = null;
+
+    if (!historyId) {
+      finalizedEntities = meta?.entities ?? null;
+      const title = toTitle(
+        trimmedMessages.find((message) => message.role === "user")?.content ?? ""
+      );
+      const { data } = await supabaseClient
+        .from("chat_history")
+        .insert({
+          user_id: user.id,
+          section,
+          mode,
+          messages: trimmedMessages,
+          title,
+          last_message_at: lastMessageAt,
+          flow_state: mode === "supplier_search" ? nextFlowState : null,
+          tool_calls: meta?.tool_calls ?? null,
+          entities: finalizedEntities,
+          summary: meta?.summary ?? null,
+        })
+        .select(
+          "id,title,messages,created_at,last_message_at,mode,flow_state,tool_calls,entities,summary"
+        )
+        .single();
+      if (data?.id) {
+        setHistoryId(data.id);
+        const nextHistory = data as ChatHistory;
+        setHistoryList((prev) => [
+          nextHistory,
+          ...prev.filter((item) => item.id !== nextHistory.id),
+        ]);
+      }
+      return;
+    }
+
+    // Update existing history
+    setHistoryList((prev) => {
+      const currentItem = prev.find((h) => h.id === historyId);
+      finalizedEntities = meta?.entities 
+        ? { ...(currentItem?.entities as Record<string, unknown> ?? {}), ...meta.entities }
+        : (currentItem?.entities ?? null);
+
+      const updated = prev.map((item) =>
+        item.id === historyId
+          ? {
+              ...item,
+              messages: trimmedMessages,
+              last_message_at: lastMessageAt,
+              flow_state: mode === "supplier_search" ? nextFlowState : item.flow_state,
+              tool_calls: meta?.tool_calls !== undefined ? meta.tool_calls : item.tool_calls,
+              entities: finalizedEntities,
+              summary: meta?.summary !== undefined ? meta.summary : item.summary,
+            }
+          : item
+      );
+
+      // Async update to DB
+      const updatePayload: any = {
+        messages: trimmedMessages,
+        last_message_at: lastMessageAt,
+      };
+      if (mode === "supplier_search") updatePayload.flow_state = nextFlowState;
+      if (meta?.tool_calls !== undefined) updatePayload.tool_calls = meta.tool_calls;
+      if (meta?.entities !== undefined) updatePayload.entities = finalizedEntities;
+      if (meta?.summary !== undefined) updatePayload.summary = meta.summary;
+
+      supabaseClient
+        .from("chat_history")
+        .update(updatePayload)
+        .eq("id", historyId)
+        .then(({ error }) => {
+          if (error) console.error("[PERSIST ERROR]", error);
+        });
+
+      const current = updated.find((item) => item.id === historyId);
+      if (!current) return updated;
+      return [current, ...updated.filter((item) => item.id !== historyId)];
+    });
+  };
+
   useEffect(() => {
     setMessages([]);
     setHistoryId(null);
@@ -344,8 +484,11 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
     setErrorMessage(null);
     setSuggestedChips([]);
     setFlowState(null);
+    setSupplierResult(null);
+
     if (!isAuthenticated || isAuthLoading) return;
     let isActive = true;
+
     const loadHistory = async () => {
       const { data, error } = await supabaseClient
         .from("chat_history")
@@ -353,13 +496,21 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
         .eq("mode", mode)
         .order("last_message_at", { ascending: false })
         .limit(20);
+      
       if (!isActive) return;
       if (error) {
         setErrorMessage("Не удалось загрузить историю чата.");
         return;
       }
-      setHistoryList((data as ChatHistory[]) ?? []);
+      const list = (data as ChatHistory[]) ?? [];
+      setHistoryList(list);
+
+      // --- AUTO-LOAD LATEST SESSION ---
+      if (list.length > 0 && !historyId) {
+        openHistory(list[0]);
+      }
     };
+
     loadHistory();
     return () => {
       isActive = false;
@@ -383,100 +534,6 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
     window.localStorage.setItem(storageKey, nextId);
     setSessionId(nextId);
   }, []);
-
-  const startNewChat = () => {
-    setMessages([]);
-    setHistoryId(null);
-    setIsArchiveView(false);
-    setErrorMessage(null);
-    setSuggestedChips([]);
-    setFlowState(null);
-    setConfirmOpen(false);
-    setPendingConfirm(null);
-    setSupplierResult(null);
-  };
-
-  const openHistory = (history: ChatHistory) => {
-    setMessages(history.messages ?? []);
-    setHistoryId(history.id);
-    setIsArchiveView(true);
-    setErrorMessage(null);
-    setSuggestedChips([]);
-    setFlowState(normalizeFlowState(history.flow_state ?? null));
-    setConfirmOpen(false);
-    setPendingConfirm(null);
-    setSupplierResult(null);
-  };
-
-  const persistChat = async (
-    nextMessages: Message[],
-    nextFlowState: Record<string, unknown> | null,
-    meta?: ChatMeta
-  ) => {
-    if (!user) return;
-    const trimmedMessages = trimMessages(nextMessages);
-    const lastMessageAt = new Date().toISOString();
-    if (!historyId) {
-      const title = toTitle(
-        trimmedMessages.find((message) => message.role === "user")?.content ?? ""
-      );
-      const { data } = await supabaseClient
-        .from("chat_history")
-        .insert({
-          user_id: user.id,
-          section,
-          mode,
-          messages: trimmedMessages,
-          title,
-          last_message_at: lastMessageAt,
-          flow_state: mode === "supplier_search" ? nextFlowState : null,
-          tool_calls: meta?.tool_calls ?? null,
-          entities: meta?.entities ?? null,
-          summary: meta?.summary ?? null,
-        })
-        .select(
-          "id,title,messages,created_at,last_message_at,mode,flow_state,tool_calls,entities,summary"
-        )
-        .single();
-      if (data?.id) {
-        setHistoryId(data.id);
-        setHistoryList((prev) => [
-          data as ChatHistory,
-          ...prev.filter((item) => item.id !== data.id),
-        ]);
-      }
-      return;
-    }
-    await supabaseClient
-      .from("chat_history")
-      .update({
-        messages: trimmedMessages,
-        last_message_at: lastMessageAt,
-        ...(mode === "supplier_search" ? { flow_state: nextFlowState } : {}),
-        tool_calls: meta?.tool_calls ?? null,
-        entities: meta?.entities ?? null,
-        summary: meta?.summary ?? null,
-      })
-      .eq("id", historyId);
-    setHistoryList((prev) => {
-      const updated = prev.map((item) =>
-        item.id === historyId
-          ? {
-              ...item,
-              messages: trimmedMessages,
-              last_message_at: lastMessageAt,
-              flow_state: mode === "supplier_search" ? nextFlowState : item.flow_state,
-              tool_calls: meta?.tool_calls ?? item.tool_calls ?? null,
-              entities: meta?.entities ?? item.entities ?? null,
-              summary: meta?.summary ?? item.summary ?? null,
-            }
-          : item
-      );
-      const current = updated.find((item) => item.id === historyId);
-      if (!current) return updated;
-      return [current, ...updated.filter((item) => item.id !== historyId)];
-    });
-  };
 
   const sendMessage = async (
     content: string,
@@ -512,11 +569,10 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
       if (response.ok && (response.response || response.message)) {
         const assistantText = response.response ?? response.message ?? "Нет ответа.";
         const uiHints = response.ui_hints as any;
-        const meta: ChatMeta = {
-          tool_calls: (response.tool_calls as Record<string, unknown>[] | undefined) ?? null,
-          entities: (response.entities as Record<string, unknown> | null | undefined) ?? null,
-          summary: response.summary ?? null,
-        };
+        const meta: ChatMeta = {};
+        if (response.tool_calls) meta.tool_calls = response.tool_calls as Record<string, unknown>[];
+        if (response.entities) meta.entities = response.entities as Record<string, unknown>;
+        if (response.summary) meta.summary = response.summary;
         const resolvedQuery =
           (response.entities as { query?: string } | null | undefined)?.query ??
           (flowState?.query as string | undefined) ??
@@ -600,6 +656,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
             sourceCounts: supplierEntities.source_counts ?? null,
             reportId: supplierEntities.report_id ?? null,
             previewCount: supplierEntities.preview_count ?? null,
+            summary: response.summary ?? (response.entities as any)?.summary ?? null,
           });
         }
         setSuggestedChips(
@@ -786,7 +843,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
                 },
                 {
                   key: "budget",
-                  label: "Бюджет/цена за штуку",
+                  label: "Бюджет/цена за штуку (в USD)",
                   placeholder: "$15–25",
                 },
                 {
@@ -924,7 +981,11 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
                 const isPreviewMessage =
                   message.role === "assistant" &&
                   (message.content.includes("Вот preview") ||
-                    message.content.includes("Результат полного анализа"));
+                    message.content.includes("Результат полного анализа") ||
+                    message.content.includes("Отчёт по поиску") ||
+                    message.content.includes("Полный отчет") ||
+                    message.content.includes("📜"));
+                
                 if (
                   supplierResult?.items?.length &&
                   index === lastAssistantPosition &&
@@ -935,13 +996,22 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
                 return (
                   <div
                     key={`${message.role}-${index}`}
-                    className={`max-w-[85%] rounded-2xl px-3 py-2 ${
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                       message.role === "user"
                         ? "ml-auto bg-linear-to-r from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/20"
                         : "ui-glass-panel text-white"
                     }`}
                   >
-                    {message.content}
+                    <div className="chat-markdown prose-emerald">
+                      <ReactMarkdown 
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />
+                        }}
+                      >
+                        {message.content}
+                      </ReactMarkdown>
+                    </div>
                   </div>
                 );
               })()
@@ -965,6 +1035,13 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
                 <div className="text-[11px] font-semibold uppercase text-white/50 mb-2">
                   {supplierResult.scope === "preview" ? "Preview результаты" : "Результаты анализа"}
                 </div>
+                {supplierResult.summary && (
+                  <div className="mb-4 chat-markdown prose-emerald text-sm">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {supplierResult.summary}
+                    </ReactMarkdown>
+                  </div>
+                )}
                 {(supplierResult.foundCount ||
                   supplierResult.bench?.price_range ||
                   supplierResult.bench?.moq_range) && (

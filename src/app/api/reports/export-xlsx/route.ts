@@ -11,12 +11,14 @@ type ExportReportRequest = {
 };
 
 type SupplierSummaryItem = {
-  source?: string;
-  title?: string;
-  price?: string;
+  platform?: string;
+  name?: string;
+  price_range?: string;
   moq?: string;
   location?: string;
-  url?: string;
+  link?: string;
+  risk_level?: string;
+  risk_factors?: string[];
 };
 
 type P3ResultSummary = {
@@ -29,6 +31,8 @@ type P3ResultSummary = {
     finalCount?: number;
   };
 };
+
+const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
 export async function POST(request: Request) {
   const payload = (await request.json()) as ExportReportRequest;
@@ -59,70 +63,61 @@ export async function POST(request: Request) {
   }
 
   const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
-  const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(token);
+  
+  // 1. Get user from token
+  const { data: userData } = await supabaseAdmin.auth.getUser(token);
+  let authenticatedUserId = userData.user?.id ?? null;
 
-  let reportRow:
-    | { id: string; user_id: string; order_id: string | null; result_summary: unknown }
-    | null = null;
-  let ownerId = userData.user?.id ?? null;
-
-  if (!userError && ownerId) {
-    const { data } = await supabaseAdmin
-      .from("reports")
-      .select("id,user_id,order_id,result_summary")
-      .eq("id", payload.reportId)
-      .single();
-    reportRow = (data as typeof reportRow) ?? null;
-  } else {
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-    if (!anonKey) {
-      return NextResponse.json(
-        { ok: false, message: "Missing Supabase anon key" },
-        { status: 500 }
-      );
-    }
-    const supabaseUser = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false },
-    });
-    const { data, error } = await supabaseUser
-      .from("reports")
-      .select("id,user_id,order_id,result_summary")
-      .eq("id", payload.reportId)
-      .single();
-    if (!error && data) {
-      reportRow = data as typeof reportRow;
-      ownerId = data.user_id;
-    } else if (refreshToken) {
-      const refreshed = await supabaseUser.auth.refreshSession({
-        refresh_token: refreshToken,
-      });
-      const refreshedUser = refreshed.data?.user ?? null;
-      if (!refreshedUser?.id) {
-        return NextResponse.json(
-          { ok: false, message: "Invalid authorization token" },
-          { status: 401 }
-        );
-      }
-      ownerId = refreshedUser.id;
-      const { data: refreshedReport } = await supabaseAdmin
-        .from("reports")
-        .select("id,user_id,order_id,result_summary")
-        .eq("id", payload.reportId)
-        .single();
-      reportRow = (refreshedReport as typeof reportRow) ?? null;
-    } else {
-      return NextResponse.json(
-        { ok: false, message: "Invalid authorization token" },
-        { status: 401 }
-      );
-    }
+  // 2. Fallback to session refresh if needed
+  if (!authenticatedUserId && refreshToken) {
+    const { data: refreshData } = await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken });
+    authenticatedUserId = refreshData.user?.id ?? null;
   }
 
-  if (!reportRow || !ownerId || reportRow.user_id !== ownerId) {
-    return NextResponse.json({ ok: false, message: "Access denied for report" }, { status: 403 });
+  if (!authenticatedUserId) {
+    return NextResponse.json({ ok: false, message: "Invalid or expired session" }, { status: 401 });
   }
 
+  // 3. Fetch report using admin client to check ownership
+  if (!isUuid(payload.reportId)) {
+    console.error("[EXPORT XLSX ERROR] Invalid reportId format:", payload.reportId);
+    return NextResponse.json({ ok: false, message: "Invalid reportId format" }, { status: 400 });
+  }
+
+  // Sequential check: first by id, then by order_id
+  let { data: reportRow, error: reportErr } = await supabaseAdmin
+    .from("reports")
+    .select("id,user_id,order_id,result_summary")
+    .eq("id", payload.reportId)
+    .maybeSingle();
+
+  if (!reportRow && !reportErr) {
+    const { data: byOrder, error: orderErr } = await supabaseAdmin
+      .from("reports")
+      .select("id,user_id,order_id,result_summary")
+      .eq("order_id", payload.reportId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    reportRow = byOrder;
+    reportErr = orderErr;
+  }
+
+  if (reportErr) {
+    console.error("[EXPORT XLSX ERROR] Database error:", reportErr);
+    return NextResponse.json({ ok: false, message: "Database error" }, { status: 500 });
+  }
+
+  if (!reportRow) {
+    console.error("[EXPORT XLSX ERROR] Report not found in DB:", payload.reportId);
+    return NextResponse.json({ ok: false, message: "Report not found" }, { status: 404 });
+  }
+
+  if (reportRow.user_id !== authenticatedUserId) {
+    return NextResponse.json({ ok: false, message: "Access denied" }, { status: 403 });
+  }
+
+  // Proceed with export...
   const summary = reportRow.result_summary as P3ResultSummary | null;
   let jobId: string | null = null;
   if (reportRow.order_id) {
@@ -149,18 +144,20 @@ export async function POST(request: Request) {
 
   const suppliersSheet = XLSX.utils.json_to_sheet(
     items.map((item) => ({
-      source: item.source ?? "",
-      title: item.title ?? "",
-      price: item.price ?? "",
+      platform: item.platform ?? "",
+      name: item.name ?? "",
+      price_range: item.price_range ?? "",
       moq: item.moq ?? "",
       location: item.location ?? "",
-      url: item.url ?? "",
+      risk_level: item.risk_level ?? "",
+      risk_factors: item.risk_factors?.join(", ") ?? "",
+      link: item.link ?? "",
     }))
   );
   XLSX.utils.book_append_sheet(workbook, suppliersSheet, "Suppliers");
   const xlsxBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
 
-  const exportPath = `${ownerId}/${payload.reportId}.xlsx`;
+  const exportPath = `${authenticatedUserId}/${payload.reportId}.xlsx`;
   const { error: uploadError } = await supabaseAdmin.storage
     .from("exports")
     .upload(exportPath, xlsxBuffer, {
@@ -184,7 +181,7 @@ export async function POST(request: Request) {
     .eq("id", payload.reportId);
 
   await supabaseAdmin.from("p3_events").insert({
-    user_id: ownerId,
+    user_id: authenticatedUserId,
     event_type: "export_xlsx",
     event_meta: { report_id: payload.reportId },
   });
