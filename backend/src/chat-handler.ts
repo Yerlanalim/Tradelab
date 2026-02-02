@@ -52,7 +52,7 @@ const SUPPLIER_INTAKE_TEMPLATE =
   "Товар: ...\n" +
   "Материалы/спецификации: ...\n" +
   "MOQ: ...\n" +
-  "Бюджет/цена за штуку: ...\n" +
+  "Бюджет/цена за штуку: ... (в USD)\n" +
   "Регион/город в Китае: ...\n" +
   "Сроки поставки: ...";
 
@@ -177,10 +177,35 @@ const formatSupplierFull = (analyzed: any, items: any[]) => {
 
 // --- AGENTS ---
 
-const runHarvesterAgent = async (runOpenAI: any, runGeminiSearch: any, query: string, googleConfig: GoogleConfig): Promise<CsvItem[]> => {
+const runHarvesterAgent = async (runOpenAI: any, runGeminiSearch: any, runSerperSearch: any, query: string, googleConfig: GoogleConfig): Promise<CsvItem[]> => {
   trace("Harvester", `Streaming Search for: ${query}`);
   
-  // Google Gemini Search Fallback
+  // 1. Priority: Serper Search
+  if (googleConfig.hasSerper) {
+    console.log('[Harvester] Using Serper Search');
+    try {
+      // Clean query
+      let cleanQuery = query;
+      const productMatch = query.match(/Товар:\s*(.*?)(?:\s*Материалы\/спецификации:|$)/i);
+      if (productMatch && productMatch[1]) {
+        cleanQuery = productMatch[1].trim();
+      } else {
+        cleanQuery = query.replace(/^Товар:\s*/i, '').split(/[МM]OQ|Бюджет|Сроки/)[0].trim().slice(0, 100);
+      }
+      
+      const items = await runSerperSearch(cleanQuery);
+      
+      if (items && Array.isArray(items) && items.length > 0) {
+        trace("Harvester Final (Serper)", items.length);
+        return items;
+      }
+      console.log('[Harvester] Serper returned 0 product links, checking fallback options...');
+    } catch (error) {
+      console.error('[Harvester] Serper Search failed:', error);
+    }
+  }
+
+  // 2. Fallback: Google Gemini Search Grounding
   if (!googleConfig.hasOpenAI && googleConfig.hasGemini) {
     console.log('[Harvester] Using Gemini Google Search Grounding');
     try {
@@ -377,8 +402,9 @@ const runAnalystAgent = async (runOpenAI: any, runGemini: any, candidates: CsvIt
 
 // --- HANDLER ---
 
-type GoogleConfig = {
+export type GoogleConfig = {
   hasOpenAI: boolean;
+  hasSerper: boolean;
   hasGoogleSearch: boolean;
   hasGemini: boolean;
   googleSearchKey?: string;
@@ -393,6 +419,7 @@ export async function chatHandler(
   rawRunOpenAI: any,
   rawRunGemini: any,
   rawRunGeminiSearch: any,
+  rawRunSerperSearch: any,
   supabaseUrl: string,
   supabaseAnonKey: string,
   googleConfig: GoogleConfig
@@ -462,6 +489,11 @@ export async function chatHandler(
     return res;
   };
 
+  const runSerperSearch = async (query: string) => {
+    const res = await rawRunSerperSearch(query);
+    return res;
+  };
+
   const token = authHeader.replace('Bearer ', '').trim();
   if (!token) return { status: 401, body: { ok: false, message: 'Unauthorized' }};
 
@@ -522,15 +554,38 @@ export async function chatHandler(
         }
 
         if (targetLinks.length === 0) {
-           const raw = await runHarvesterAgent(runOpenAI, runGeminiSearch, query, googleConfig);
+           const raw = await runHarvesterAgent(runOpenAI, runGeminiSearch, runSerperSearch, query, googleConfig);
            targetLinks = runScreenerAgent(raw);
         }
 
-        const { data: order } = await supabaseAdmin.from("orders").insert({ 
-          user_id: user.id, product_type: "p3", status: "processing", 
-          price: P3_FULL_USD, idempotency_key: buildIdempotencyKey(query, session_id + ":full") 
+        const idempotencyKey = buildIdempotencyKey(query, session_id + ":full");
+        
+        // Try to insert first
+        let { data: order, error: orderErr } = await supabaseAdmin.from("orders").insert({ 
+          user_id: user.id, 
+          product_type: "p3", 
+          status: "processing", 
+          price: P3_FULL_USD,
+          currency: "USD",
+          idempotency_key: idempotencyKey
         }).select("id").single();
-        if (!order) return { status: 500, body: { ok: false, message: "Ошибка создания заказа" } };
+
+        // If idempotency violation, fetch existing order
+        if (orderErr && orderErr.code === '23505') {
+          console.log("[Idempotency] Order already exists, fetching existing one...");
+          const { data: existing } = await supabaseAdmin.from("orders")
+            .select("id")
+            .eq("user_id", user.id)
+            .eq("idempotency_key", idempotencyKey)
+            .single();
+          order = existing;
+          orderErr = null;
+        }
+
+        if (orderErr || !order) {
+          console.error("[Order Creation Error]", orderErr);
+          return { status: 500, body: { ok: false, message: "Ошибка создания заказа", error: orderErr?.message } };
+        }
         
         await supabaseAdmin.rpc("tc_apply_debit", { p_user_id: user.id, p_amount: P3_FULL_TC, p_ref_id: order.id, p_reason: "P3 Full Supplier Report" });
         
@@ -558,7 +613,7 @@ export async function chatHandler(
       if (!query) return { status: 200, body: { ok: true, message: "Опишите товар.", suggested_chips: [{ id: "t", label: "Шаблон", action: "insert", payload: SUPPLIER_INTAKE_TEMPLATE }] } };
       
       const startTime = Date.now();
-      const rawLinks = await runHarvesterAgent(runOpenAI, runGeminiSearch, query, googleConfig);
+      const rawLinks = await runHarvesterAgent(runOpenAI, runGeminiSearch, runSerperSearch, query, googleConfig);
       const uniqueLinks = runScreenerAgent(rawLinks);
       
       const { data: sSearch } = await supabaseAdmin.from("supplier_searches").insert({ 

@@ -5,7 +5,7 @@ import {
   OPENAI_API_KEY, P3_SEARCH_MODEL, P3_BASE_MODEL, 
   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, 
   PORT,
-  GOOGLE_SEARCH_API_KEY, GOOGLE_SEARCH_CX, GOOGLE_GEMINI_KEY, GEMINI_MODEL
+  GOOGLE_SEARCH_API_KEY, GOOGLE_SEARCH_CX, GOOGLE_GEMINI_KEY, GEMINI_MODEL, SERPER_API_KEY
 } from './config.js';
 import { createOpenAIClient } from './openai.js';
 import { createGoogleAIClient } from './google-ai.js';
@@ -57,7 +57,7 @@ app.post('/chat', async (req: Request, res: Response) => {
     
     // Create AI clients
     const { runOpenAI } = createOpenAIClient(OPENAI_API_KEY);
-    const { runGemini, runGeminiSearch } = createGoogleAIClient(GOOGLE_GEMINI_KEY);
+    const { runGemini, runGeminiSearch, runSerperSearch } = createGoogleAIClient(GOOGLE_GEMINI_KEY);
 
     const result = await chatHandler(
       req.body, 
@@ -66,10 +66,12 @@ app.post('/chat', async (req: Request, res: Response) => {
       runOpenAI,
       runGemini,
       runGeminiSearch,
+      runSerperSearch,
       SUPABASE_URL, 
       SUPABASE_ANON_KEY,
       {
         hasOpenAI,
+        hasSerper: !!SERPER_API_KEY,
         hasGoogleSearch,
         hasGemini,
         googleSearchKey: GOOGLE_SEARCH_API_KEY,

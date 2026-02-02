@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { GOOGLE_GEMINI_KEY, GEMINI_MODEL } from './config.js';
+import { GOOGLE_GEMINI_KEY, GEMINI_MODEL, GOOGLE_SEARCH_API_KEY, GOOGLE_SEARCH_CX, SERPER_API_KEY } from './config.js';
 
 export const createGoogleAIClient = (apiKey?: string) => {
   const key = apiKey || GOOGLE_GEMINI_KEY;
@@ -102,5 +102,70 @@ export const createGoogleAIClient = (apiKey?: string) => {
     }
   };
 
-  return { runGemini, runGeminiSearch };
+  type SerperResult = {
+    title: string;
+    link: string;
+    snippet: string;
+  };
+
+  const runSerperSearch = async (query: string): Promise<any> => {
+    const serperKey = process.env.SERPER_API_KEY || SERPER_API_KEY;
+    if (!serperKey) {
+      console.error("[Serper] Missing API Key");
+      return [];
+    }
+
+    const siteFilter = "(site:alibaba.com OR site:made-in-china.com)";
+    const cleanQuery = query.replace("site:alibaba.com", "").replace("site:made-in-china.com", "").trim();
+    const finalQuery = `${cleanQuery} ${siteFilter}`;
+
+    console.log(`[Serper] Requesting: ${finalQuery}`);
+
+    const url = 'https://google.serper.dev/search';
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-API-KEY': serperKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          q: finalQuery,
+          num: 20,
+          gl: "us",
+          hl: "en"
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Serper API error: ${response.status} ${errorText}`);
+      }
+
+      const data = await response.json();
+      const organicResults: SerperResult[] = data.organic || [];
+
+      const items = organicResults
+        .filter(item => {
+           const link = item.link.toLowerCase();
+           return !link.includes("login") && !link.includes("signin") && !link.includes("search.html");
+        })
+        .map(item => ({
+          name: item.title,
+          link: item.link,
+          snippet: item.snippet,
+          platform: item.link.includes("alibaba") ? "Alibaba" : "Made-in-China"
+        }));
+
+      console.log(`[Serper] Success. Found ${items.length} items.`);
+      return items;
+
+    } catch (error) {
+      console.error('[Serper Error]:', error);
+      return [];
+    }
+  };
+
+  return { runGemini, runGeminiSearch, runSerperSearch };
 };
