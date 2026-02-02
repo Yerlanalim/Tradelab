@@ -217,6 +217,15 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
   const [supplierResult, setSupplierResult] = useState<SupplierResultState | null>(null);
   const [confirmBalance, setConfirmBalance] = useState<number | null>(null);
   const [isBalanceLoading, setIsBalanceLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isLoading, supplierResult]);
 
   // --- НОВОЕ: Состояние для текста загрузки ---
   const [loadingText, setLoadingText] = useState("Обрабатываю запрос...");
@@ -741,8 +750,8 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
 
   const containerClassName =
     variant === "center"
-      ? "mx-auto w-full max-w-3xl rounded-3xl border border-white/10 bg-linear-to-br from-[#0f172a] to-[#111c34] shadow-xl shadow-emerald-500/10"
-      : "flex flex-col border-l border-white/10 bg-linear-to-br from-[#0f172a] to-[#111c34]";
+      ? "mx-auto w-full max-w-3xl rounded-3xl border border-white/10 bg-[#0f172a] shadow-xl shadow-emerald-500/10 flex flex-col h-[600px] md:h-[700px] lg:h-[80vh]"
+      : "flex flex-col border-l border-white/10 bg-[#0f172a] h-full";
 
   return (
     <aside className={containerClassName}>
@@ -776,7 +785,8 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm scroll-smooth">
+
         {mode === "supplier_search" && isCentered && (
           <div className="rounded-2xl ui-glass-panel p-4 text-xs text-white/70">
             <div className="text-[11px] font-semibold uppercase text-white/50">
@@ -1381,6 +1391,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
                 )}
               </div>
             ) : null}
+            <div ref={messagesEndRef} />
           </>
         )}
       </div>
@@ -1402,7 +1413,7 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
         </div>
       )}
 
-      <div className="p-4 border-t border-white/10">
+      <div className="mt-auto p-4 border-t border-white/10 bg-[#0f172a] sticky bottom-0 z-20">
         {/* --- НОВОЕ: Индикатор загрузки --- */}
         {isLoading && (
           <div className="mb-3 flex items-center gap-2 text-xs text-emerald-400 animate-pulse">

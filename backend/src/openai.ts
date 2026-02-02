@@ -48,7 +48,10 @@ export const createOpenAIClient = (apiKey?: string) => {
         const messages = Array.isArray(input) ? input : [{ role: "user", content: String(input || "") }];
         return messages.map(msg => ({
           role: msg.role || "user",
-          content: Array.isArray(msg.content) ? msg.content : [{ type: "input_text", text: String(msg.content || "") }]
+          content: Array.isArray(msg.content) ? msg.content : [{ 
+            type: msg.role === 'assistant' ? "output_text" : "input_text", 
+            text: String(msg.content || "") 
+          }]
         }));
       };
 
