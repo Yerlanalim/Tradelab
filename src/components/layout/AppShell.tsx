@@ -47,9 +47,11 @@ export function AppShell({
             {requireAuth ? <AuthGate>{children}</AuthGate> : children}
           </div>
         </main>
-        <aside className="sticky top-0 h-screen overflow-hidden">
-          {chatVariant === "sidebar" ? <ChatPanel variant="sidebar" /> : null}
-        </aside>
+        {chatVariant === "sidebar" && (
+          <aside className="sticky top-0 h-screen overflow-hidden">
+            <ChatPanel variant="sidebar" />
+          </aside>
+        )}
       </div>
     </div>
   );

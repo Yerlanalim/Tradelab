@@ -217,10 +217,15 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
   const [supplierResult, setSupplierResult] = useState<SupplierResultState | null>(null);
   const [confirmBalance, setConfirmBalance] = useState<number | null>(null);
   const [isBalanceLoading, setIsBalanceLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+        behavior,
+      });
+    }
   };
 
   useEffect(() => {
@@ -785,7 +790,10 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm scroll-smooth">
+      <div 
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto p-4 space-y-4 text-sm scroll-smooth"
+      >
 
         {mode === "supplier_search" && isCentered && (
           <div className="rounded-2xl ui-glass-panel p-4 text-xs text-white/70">
@@ -1391,7 +1399,6 @@ export function ChatPanel({ variant = "sidebar" }: ChatPanelProps) {
                 )}
               </div>
             ) : null}
-            <div ref={messagesEndRef} />
           </>
         )}
       </div>
