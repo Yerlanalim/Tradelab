@@ -2,12 +2,24 @@
   "name": "tradelab-test-2",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "backend",
+    "tnved-service"
+  ],
   "scripts": {
-    "dev": "concurrently -n \"NEXT,BACK\" -c \"cyan,yellow\" \"npm:dev:frontend\" \"npm:dev:backend\"",
+    "dev": "concurrently -n \"NEXT,BACK,TNVED\" -c \"cyan,yellow,magenta\" \"npm:dev:frontend\" \"npm:dev:backend\" \"npm:dev:tnved\"",
     "dev:frontend": "next dev",
     "dev:backend": "npm run dev --prefix backend",
-    "build": "next build",
-    "start": "next start",
+    "dev:tnved": "npm run dev --prefix tnved-service",
+    "build": "npm run build:frontend && npm run build:backend && npm run build:tnved",
+    "build:frontend": "next build",
+    "build:backend": "npm run build --prefix backend",
+    "build:tnved": "npm run build --prefix tnved-service",
+    "build:tnved:db": "npm run build:db --prefix tnved-service",
+    "start": "concurrently -n \"NEXT,BACK,TNVED\" -c \"cyan,yellow,magenta\" \"npm:start:frontend\" \"npm:start:backend\" \"npm:start:tnved\"",
+    "start:frontend": "next start",
+    "start:backend": "npm run start --prefix backend",
+    "start:tnved": "npm run start --prefix tnved-service",
     "lint": "eslint"
   },
   "dependencies": {

@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TradeLab Platform
 
-## Getting Started
+Интеллектуальная платформа для управления внешнеэкономической деятельностью (ВЭД).
 
-First, run the development server:
+## Архитектура проекта
 
+Проект реализован как монорепозиторий (NPM Workspaces) и состоит из трех основных частей:
+
+1.  **Frontend (Next.js)**: Основной пользовательский интерфейс (Dashboard, инструменты поиска, аналитика). Порт `3000`.
+2.  **Backend (Express)**: Прокси-сервер для тяжелых операций, интеграции с AI агентами и Supabase. Порт `3001`.
+3.  **TNVED Microservice (Fastify)**: Специализированный offline-first сервис для поиска кодов ТНВЭД с поддержкой AI Fallback. Порт `3002`.
+
+## Как запустить всё сразу
+
+Проект настроен для максимально простого запуска одной командой из корня:
+
+### 1. Установка зависимостей
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Настройка переменных окружения
+Создайте файл `.env` в корне проекта на основе `.env.example`. Все сервисы автоматически подхватят общие настройки (API ключи, порты и т.д.).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Сборка базы данных ТНВЭД
+Для работы поиска кодов необходимо собрать локальную SQLite базу из XLSX файла:
+```bash
+npm run build:tnved:db
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 4. Запуск в режиме разработки
+```bash
+npm run dev
+```
+Эта команда запустит все три сервиса одновременно с параллельным выводом логов.
 
-## Learn More
+## Глобальные команды (управление из корня)
 
-To learn more about Next.js, take a look at the following resources:
+- `npm run dev` — запуск всех сервисов параллельно.
+- `npm run build` — последовательная сборка всех компонентов проекта.
+- `npm run build:tnved:db` — сборка/обновление базы данных ТНВЭД.
+- `npm start` — запуск всех сервисов в режиме Production (требует предварительной сборки).
+- `npm run lint` — проверка качества кода во всем репозитории.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Документация подпроектов
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Подробную информацию по каждому сервису можно найти в их папках:
+- [Микросервис ТНВЭД](./tnved-service/README.md)
+- [Бэкенд](./backend/README.md)
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+*TradeLab Ecosystem*

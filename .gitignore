@@ -47,5 +47,12 @@ supabase/.temp/
 /backend/node_modules
 **/*.log
 
+# tnved-service
+/tnved-service/dist
+/tnved-service/node_modules
+/tnved-service/data/*.db
+/tnved-service/data/*.db-shm
+/tnved-service/data/*.db-wal
+
 # agent
 .antigravity/

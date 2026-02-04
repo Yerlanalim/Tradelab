@@ -1,4 +1,7 @@
+"use client";
+
 import { AlertTriangle, Calculator, Hash, Sparkles } from "lucide-react";
+import Link from "next/link";
 
 const freeTools = [
   {
@@ -8,6 +11,7 @@ const freeTools = [
     icon: Calculator,
     badge: "Бесплатно",
     badgeColor: "from-emerald-500 to-emerald-600",
+    href: "/library/hs-search", // Пока ведем сюда же для демонстрации
   },
   {
     id: 2,
@@ -16,6 +20,7 @@ const freeTools = [
     icon: Hash,
     badge: "Бесплатно",
     badgeColor: "from-blue-500 to-blue-600",
+    href: "/library/hs-search",
   },
   {
     id: 3,
@@ -24,6 +29,7 @@ const freeTools = [
     icon: AlertTriangle,
     badge: "Beta",
     badgeColor: "from-purple-500 to-purple-600",
+    href: "/products/company-check",
   },
 ];
 
@@ -47,8 +53,9 @@ export function FreeToolsSection() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {freeTools.map((tool) => (
-          <div
+          <Link
             key={tool.id}
+            href={tool.href}
             className="group relative ui-glass-panel rounded-2xl p-6 hover:border-emerald-500/50 transition-all duration-300 cursor-pointer overflow-hidden hover:scale-[1.01]"
           >
             <div className="absolute inset-0 bg-linear-to-br from-emerald-500/10 via-transparent to-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
@@ -73,14 +80,14 @@ export function FreeToolsSection() {
                 {tool.description}
               </p>
 
-              <button className="text-emerald-400 font-semibold text-sm hover:text-emerald-300 transition-colors flex items-center gap-2 group/link">
+              <div className="text-emerald-400 font-semibold text-sm hover:text-emerald-300 transition-colors flex items-center gap-2 group/link">
                 Попробовать
                 <span className="group-hover/link:translate-x-1 transition-transform">
                   →
                 </span>
-              </button>
+              </div>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
     </div>

@@ -11,6 +11,7 @@ import {
   Settings,
   Sparkles,
   BookOpen,
+  Hash,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -24,6 +25,7 @@ const navItems = [
     icon: Package,
     hasDropdown: true,
   },
+  { href: "/library/hs-search", label: "Поиск ТНВЭД", icon: Hash },
   { href: "/map", label: "Карта Китая", icon: Map },
   { href: "/library", label: "Библиотека", icon: BookOpen },
   { href: "/zones", label: "Торговые зоны", icon: Building2 },

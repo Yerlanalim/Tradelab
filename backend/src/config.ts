@@ -45,7 +45,7 @@ export const SUPABASE_URL = getEnv('NEXT_PUBLIC_SUPABASE_URL') || getEnv('SUPABA
 export const SUPABASE_ANON_KEY = getEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
 export const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
-export const PORT = parseInt(process.env.PORT || '3001', 10);
+export const PORT = parseInt(process.env.BACKEND_PORT || '3001', 10);
 
 const maskKey = (key: string) => key ? `${key.slice(0, 4)}...${key.slice(-4)}` : 'MISSING';
 
