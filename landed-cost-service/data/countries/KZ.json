@@ -1,0 +1,9 @@
+{
+  "country": "KZ",
+  "currency": "KZT",
+  "import_vat": { "default_rate": 0.16, "reduced_rate": 0.10 },
+  "customs_fees": {
+    "type": "table",
+    "table_ref": "fees_kz_2026_01_01"
+  }
+}

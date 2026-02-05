@@ -1,0 +1,7 @@
+{
+  "required_inputs": {
+    "always": ["dest_country", "incoterms", "goods_value", "currency", "weight_kg"],
+    "for_duty_units": ["quantity", "volume_l", "area_m2", "engine_cc"],
+    "for_shipping_quote": ["dimensions_cm", "origin_city", "dest_city", "mode_preference"]
+  }
+}

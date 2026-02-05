@@ -1,0 +1,123 @@
+# Golden Test Cases for Quote Calculation
+# These are stable, reproducible scenarios that should always produce the same results
+
+cases:
+  - id: cif_advalorem_vat
+    name: "CIF + Advalorem 10% + VAT 12%"
+    input:
+      dest_country: KZ
+      incoterms: CIF
+      goods_value: 10000
+      currency: USD
+      weight_gross_kg: 100
+      hs_code: "8471300000"
+    expected:
+      status: ok
+      customs_value_usd: [10000, 10000]
+      duty_range_usd: [1000, 1000]
+      vat_range_usd: [1320, 1320]
+      confidence_level: high
+      missing_inputs: []
+
+  - id: fob_with_freight
+    name: "FOB + Freight Range + Insurance"
+    input:
+      dest_country: KZ
+      incoterms: FOB
+      goods_value: 5000
+      currency: USD
+      weight_gross_kg: 50
+      hs_code: "8471300000"
+      country_of_origin: CN
+    expected:
+      status: ok
+      # Customs value = invoice + freight + insurance
+      # freight varies, so we check it exists
+      has_freight_to_border: true
+      confidence_level: medium
+
+  - id: exw_no_freight
+    name: "EXW without freight data"
+    input:
+      dest_country: KZ
+      incoterms: EXW
+      goods_value: 3000
+      currency: USD
+      weight_gross_kg: 30
+      hs_code: "8471300000"
+    expected:
+      status: incomplete
+      missing_inputs_contains: ["freight_to_border"]
+      confidence_level: low
+
+  - id: dap_unknown_freight
+    name: "DAP with unknown invoice_includes_freight"
+    input:
+      dest_country: KZ
+      incoterms: DAP
+      goods_value: 8000
+      currency: USD
+      weight_gross_kg: 80
+      hs_code: "8471300000"
+    expected:
+      status: incomplete
+      missing_inputs_contains: ["invoice_includes_freight"]
+      confidence_level: low
+
+  - id: ddp_escalation
+    name: "DDP requires escalation"
+    input:
+      dest_country: KZ
+      incoterms: DDP
+      goods_value: 15000
+      currency: USD
+      weight_gross_kg: 150
+      hs_code: "8471300000"
+    expected:
+      status: escalation_required
+      escalation_reasons_contains: ["DDP"]
+      confidence_level: low
+
+  - id: low_hs_confidence
+    name: "Low HS confidence triggers escalation"
+    input:
+      dest_country: KZ
+      incoterms: CIF
+      goods_value: 7000
+      currency: USD
+      weight_gross_kg: 70
+      hs_code: "8471300000"
+      hs_confidence: 0.50
+    expected:
+      status: ok
+      requires_escalation: true
+      escalation_reasons_contains: ["Low HS confidence"]
+      confidence_level: low
+
+  - id: specific_duty_kg
+    name: "Specific duty with kg unit"
+    input:
+      dest_country: KZ
+      incoterms: CIF
+      goods_value: 5000
+      currency: USD
+      weight_gross_kg: 100
+      hs_code: "2203000000"  # Beer - has specific duty
+    expected:
+      status: ok
+      # Specific duty calculation should work
+      has_duty_breakdown: true
+
+  - id: currency_conversion
+    name: "Currency conversion EUR to USD"
+    input:
+      dest_country: KZ
+      incoterms: CIF
+      goods_value: 5000
+      currency: EUR
+      weight_gross_kg: 50
+      hs_code: "8471300000"
+    expected:
+      status: ok
+      # goods_value_usd should be converted
+      inputs_normalized_currency: USD

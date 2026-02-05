@@ -1,0 +1,4 @@
+lane_id,origin_country,origin_city,dest_country,dest_city,enabled
+CN-SZ-RU-MOW,CN,Shenzhen,RU,Moscow,true
+CN-GZ-KZ-ALA,CN,Guangzhou,KZ,Almaty,true
+...

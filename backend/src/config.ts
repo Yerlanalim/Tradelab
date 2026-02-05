@@ -44,15 +44,16 @@ export const SERPER_API_KEY = getEnv('SERPER_API_KEY');
 export const SUPABASE_URL = getEnv('NEXT_PUBLIC_SUPABASE_URL') || getEnv('SUPABASE_URL');
 export const SUPABASE_ANON_KEY = getEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
 export const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+export const DEBUG_ENV = getEnv('DEBUG_ENV') === 'true';
 
 export const PORT = parseInt(process.env.BACKEND_PORT || '3001', 10);
 
-const maskKey = (key: string) => key ? `${key.slice(0, 4)}...${key.slice(-4)}` : 'MISSING';
-
-console.log('--- Env Debug ---');
-console.log('SUPABASE_URL:', SUPABASE_URL || 'MISSING');
-console.log('SUPABASE_ANON_KEY:', maskKey(SUPABASE_ANON_KEY), `(len: ${SUPABASE_ANON_KEY.length})`);
-console.log('SUPABASE_SERVICE_ROLE_KEY:', maskKey(SUPABASE_SERVICE_ROLE_KEY), `(len: ${SUPABASE_SERVICE_ROLE_KEY.length})`);
-console.log('AI STACK:', OPENAI_API_KEY ? 'OpenAI (Primary)' : (GOOGLE_GEMINI_KEY ? `Google ${GEMINI_MODEL} (Fallback)` : 'MISSING'));
-console.log('SEARCH STACK:', SERPER_API_KEY ? 'Serper.dev (Primary)' : (OPENAI_API_KEY ? 'OpenAI Search' : (GOOGLE_SEARCH_API_KEY ? 'Google Custom Search' : 'MISSING')));
-console.log('-----------------');
+if (DEBUG_ENV) {
+  console.log('--- Env Debug ---');
+  console.log('SUPABASE_URL present:', !!SUPABASE_URL);
+  console.log('SUPABASE_ANON_KEY present:', !!SUPABASE_ANON_KEY);
+  console.log('SUPABASE_SERVICE_ROLE_KEY present:', !!SUPABASE_SERVICE_ROLE_KEY);
+  console.log('AI STACK:', OPENAI_API_KEY ? 'OpenAI (Primary)' : (GOOGLE_GEMINI_KEY ? `Google ${GEMINI_MODEL} (Fallback)` : 'MISSING'));
+  console.log('SEARCH STACK:', SERPER_API_KEY ? 'Serper.dev (Primary)' : (OPENAI_API_KEY ? 'OpenAI Search' : (GOOGLE_SEARCH_API_KEY ? 'Google Custom Search' : 'MISSING')));
+  console.log('-----------------');
+}

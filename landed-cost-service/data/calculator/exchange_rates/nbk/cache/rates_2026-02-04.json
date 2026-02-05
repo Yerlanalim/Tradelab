@@ -1,0 +1,10 @@
+{
+  "date": "2026-02-04",
+  "base": "KZT",
+  "rates": {
+    "USD": 503.44,
+    "EUR": 0,
+    "RUB": 0
+  },
+  "source": "NBRK"
+}

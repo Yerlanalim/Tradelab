@@ -1,0 +1,17 @@
+{
+  "units": [
+    {"pattern": "кг|kg", "normalized": "kg"},
+    {"pattern": "1\\s*000\\s*шт|1000\\s*pcs", "normalized": "1000pcs"},
+    {"pattern": "л|l|литр", "normalized": "l"},
+    {"pattern": "м2|m2|кв\\.?м", "normalized": "m2"},
+    {"pattern": "см3|cm3|мл|ml", "normalized": "cm3"},
+    {"pattern": "т|ton|тонн", "normalized": "ton"},
+    {"pattern": "пар|pair", "normalized": "pair"}
+  ],
+  "currencies": ["EUR", "USD", "KZT", "RUB", "BYN", "AMD", "KGS"],
+  "operators": [
+    {"pattern": "но не менее|not less than", "type": "max"},
+    {"pattern": "плюс|plus|\\+", "type": "sum"},
+    {"pattern": "или|or", "type": "or", "escalation": true}
+  ]
+}

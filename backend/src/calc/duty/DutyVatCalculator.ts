@@ -1,0 +1,308 @@
+import { 
+  DealPassport, 
+  CustomsValueResult, 
+  DutyVatResult, 
+  DutyBreakdown,
+  CustomsFee,
+  HSResult,
+  DutyAST,
+  Source 
+} from '../types/contracts';
+import { HSClient } from '../hs/HSClient';
+import { DataCacheManager } from '../config/DataCacheManager';
+import { CurrencyConverter } from '../currency/CurrencyConverter';
+import { UnsupportedTariffError } from '../errors';
+
+interface CountryTaxConfig {
+  country_code: string;
+  import_vat_default_rate: number;
+  active: boolean;
+}
+
+interface CustomsFeesConfig {
+  fee_id: string;
+  country_code: string;
+  fee_type: string;
+  amount: number;
+  currency: string;
+  active: boolean;
+}
+
+export class DutyVatCalculator {
+  constructor(
+    private hsClient: HSClient,
+    private cache: DataCacheManager,
+    private converter: CurrencyConverter
+  ) {}
+
+  async execute(
+    passport: DealPassport,
+    hsResult: HSResult,
+    customsValue: CustomsValueResult
+  ): Promise<DutyVatResult> {
+    const result: DutyVatResult = {
+      duty: {
+        range_usd: [0, 0],
+        breakdown: [],
+        base_formula: ''
+      },
+      vat: {
+        rate: 0,
+        range_usd: [0, 0],
+        base_formula: ''
+      },
+      fees_usd: [],
+      total_range_usd: [0, 0],
+      assumptions: [],
+      sources: [],
+      missing_inputs: [],
+      requires_escalation: false,
+      escalation_reasons: []
+    };
+
+    // Check HS confidence and risk flags
+    const topConfidence = hsResult.candidates[0]?.confidence || 0;
+    if (hsResult.candidates.length > 0 && topConfidence < 0.65) {
+      result.requires_escalation = true;
+      result.escalation_reasons.push(`Low HS confidence: ${topConfidence.toFixed(2)}`);
+    }
+
+    if (hsResult.candidates.length > 1) {
+      result.requires_escalation = true;
+      result.escalation_reasons.push(`Multiple HS candidates (${hsResult.candidates.length})`);
+    }
+
+    // Calculate duty for each HS candidate
+    const dutyBreakdowns: DutyBreakdown[] = [];
+    let dutyMin = Infinity;
+    let dutyMax = -Infinity;
+    let vatExempt = false;
+    
+    for (const candidate of hsResult.candidates) {
+      try {
+        const tariffInfo = await this.hsClient.getTariff(candidate.hs_code);
+        
+        if (!tariffInfo.import_duty_parsed) {
+          result.requires_escalation = true;
+          result.escalation_reasons.push(`No parsed duty for HS ${candidate.hs_code}`);
+          continue;
+        }
+
+        const dutyRange = this.calculateDutyFromAST(
+          tariffInfo.import_duty_parsed,
+          customsValue.customs_value_usd,
+          passport
+        );
+
+        const breakdown: DutyBreakdown = {
+          hs_code: candidate.hs_code,
+          type: tariffInfo.import_duty_parsed.kind,
+          calculated_amount: dutyRange
+        };
+
+        // Add type-specific details
+        if (tariffInfo.import_duty_parsed.kind === 'advalorem') {
+          breakdown.advalorem_rate = tariffInfo.import_duty_parsed.percent;
+        } else if (tariffInfo.import_duty_parsed.kind === 'specific') {
+          breakdown.specific_rate = {
+            amount: tariffInfo.import_duty_parsed.amount,
+            currency: tariffInfo.import_duty_parsed.currency,
+            unit: tariffInfo.import_duty_parsed.unit
+          };
+        }
+
+        dutyBreakdowns.push(breakdown);
+        dutyMin = Math.min(dutyMin, dutyRange[0]);
+        dutyMax = Math.max(dutyMax, dutyRange[1]);
+
+        if (tariffInfo.vat_exempt) {
+          vatExempt = true;
+        }
+
+        result.sources.push({
+          type: 'hs_engine',
+          ref: candidate.hs_code,
+          version: 'hs_client'
+        });
+
+        if (!result.duty.base_formula) {
+          result.duty.base_formula = tariffInfo.import_duty_raw;
+        }
+
+      } catch (error: any) {
+        if (error instanceof UnsupportedTariffError) {
+          result.requires_escalation = true;
+          result.escalation_reasons.push(`Unsupported tariff for HS ${candidate.hs_code}: ${error.message}`);
+        } else {
+          result.requires_escalation = true;
+          result.escalation_reasons.push(`HS tariff lookup failed for ${candidate.hs_code}`);
+        }
+      }
+    }
+
+    if (dutyBreakdowns.length === 0) {
+      if (hsResult.candidates.length > 0) {
+        result.requires_escalation = true;
+        result.escalation_reasons.push('No valid duty calculations available');
+      }
+      return result;
+    }
+
+    result.duty.range_usd = [dutyMin, dutyMax];
+    result.duty.breakdown = dutyBreakdowns;
+
+    // Calculate VAT
+    const vatResult = await this.calculateVAT(
+      passport,
+      customsValue.customs_value_usd,
+      result.duty.range_usd,
+      vatExempt
+    );
+
+    result.vat = vatResult.vat;
+    result.assumptions.push(...vatResult.assumptions);
+    result.sources.push(...vatResult.sources);
+    
+    if (vatResult.requires_escalation) {
+      result.requires_escalation = true;
+      result.escalation_reasons.push(...vatResult.escalation_reasons);
+    }
+
+    // Calculate total
+    result.total_range_usd = [
+      result.duty.range_usd[0] + result.vat.range_usd[0],
+      result.duty.range_usd[1] + result.vat.range_usd[1]
+    ];
+
+    // Calculate customs fees (stub for MVP)
+    result.assumptions.push('Customs fees not included in MVP calculation');
+
+    return result;
+  }
+
+  private calculateDutyFromAST(
+    ast: DutyAST,
+    customsValueRange: [number, number],
+    passport: DealPassport
+  ): [number, number] {
+    const [customsMin, customsMax] = customsValueRange;
+
+    switch (ast.kind) {
+      case 'advalorem': {
+        const dutyMin = customsMin * ast.percent;
+        const dutyMax = customsMax * ast.percent;
+        return [dutyMin, dutyMax];
+      }
+
+      case 'specific': {
+        // MVP: only support kg unit
+        if (ast.unit !== 'kg') {
+          throw new UnsupportedTariffError(`Specific duty unit '${ast.unit}' not supported in MVP (only 'kg')`);
+        }
+
+        if (!passport.weight_gross_kg || passport.weight_gross_kg <= 0) {
+          throw new UnsupportedTariffError('weight_gross_kg required for specific duty calculation');
+        }
+
+        const amountUSD = this.converter.toInternal(ast.amount, ast.currency);
+        const duty = amountUSD * passport.weight_gross_kg;
+        return [duty, duty];
+      }
+
+      case 'sum': {
+        const advaloremRange = this.calculateDutyFromAST(
+          ast.advalorem,
+          customsValueRange,
+          passport
+        );
+        const specificRange = this.calculateDutyFromAST(
+          ast.specific,
+          customsValueRange,
+          passport
+        );
+        return [
+          advaloremRange[0] + specificRange[0],
+          advaloremRange[1] + specificRange[1]
+        ];
+      }
+
+      case 'max': {
+        const ranges = ast.options.map(option =>
+          this.calculateDutyFromAST(option, customsValueRange, passport)
+        );
+        const dutyMin = Math.max(...ranges.map(r => r[0]));
+        const dutyMax = Math.max(...ranges.map(r => r[1]));
+        return [dutyMin, dutyMax];
+      }
+
+      default:
+        throw new UnsupportedTariffError(`Unknown AST kind: ${(ast as any).kind}`);
+    }
+  }
+
+  private async calculateVAT(
+    passport: DealPassport,
+    customsValueRange: [number, number],
+    dutyRange: [number, number],
+    vatExempt: boolean
+  ): Promise<{
+    vat: {
+      rate: number;
+      range_usd: [number, number];
+      base_formula: string;
+    };
+    assumptions: string[];
+    sources: Source[];
+    requires_escalation: boolean;
+    escalation_reasons: string[];
+  }> {
+    const result = {
+      vat: {
+        rate: 0,
+        range_usd: [0, 0] as [number, number],
+        base_formula: ''
+      },
+      assumptions: [] as string[],
+      sources: [] as Source[],
+      requires_escalation: false,
+      escalation_reasons: [] as string[]
+    };
+
+    if (vatExempt) {
+      result.vat.range_usd = [0, 0];
+      result.vat.base_formula = 'VAT exempt';
+      result.assumptions.push('VAT exempt for this HS code');
+      return result;
+    }
+
+    // Get VAT rate from config
+    const taxConfigs = this.cache.query<CountryTaxConfig>('calc_country_tax_config');
+    const countryConfig = taxConfigs.find(
+      c => c.country_code === passport.dest_country && c.active
+    );
+
+    if (!countryConfig) {
+      result.requires_escalation = true;
+      result.escalation_reasons.push(`VAT config missing for country ${passport.dest_country}`);
+      return result;
+    }
+
+    const vatRate = countryConfig.import_vat_default_rate;
+    result.vat.rate = vatRate;
+    
+    // VAT base = customs_value + duty
+    const vatBaseMin = customsValueRange[0] + dutyRange[0];
+    const vatBaseMax = customsValueRange[1] + dutyRange[1];
+    
+    result.vat.range_usd = [vatBaseMin * vatRate, vatBaseMax * vatRate];
+    result.vat.base_formula = '(customs_value + duty) * vat_rate';
+    result.assumptions.push(`VAT rate: ${(vatRate * 100).toFixed(1)}% on (customs value + duty)`);
+    result.sources.push({
+      type: 'supabase_table',
+      ref: 'calc_country_tax_config',
+      version: passport.dest_country
+    });
+
+    return result;
+  }
+}

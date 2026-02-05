@@ -5,6 +5,7 @@
     "lib": ["ESNext", "DOM"],
     "outDir": "./dist",
     "rootDir": "./src",
+    "types": ["vitest/globals"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

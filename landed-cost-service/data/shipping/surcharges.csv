@@ -1,0 +1,3 @@
+surcharge_id,rate_id,type,amount,currency,applies_to
+SC1,RC1,fuel_percent,0.18,USD,freight
+SC2,RC1,terminal_fixed,35,USD,shipment

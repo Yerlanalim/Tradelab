@@ -1,0 +1,4 @@
+rate_id,lane_id,mode,price_basis,min_charge,currency,transit_days_min,transit_days_max,valid_from,valid_to
+RC1,CN-SZ-RU-MOW,air,kg,200,USD,3,7,2026-01-01,2026-12-31
+RC2,CN-SZ-RU-MOW,rail,kg,100,USD,14,25,2026-01-01,2026-12-31
+RC3,CN-SZ-RU-MOW,sea,container_40,0,USD,35,55,2026-01-01,2026-12-31

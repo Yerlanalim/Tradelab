@@ -11,7 +11,7 @@ const freeTools = [
     icon: Calculator,
     badge: "Бесплатно",
     badgeColor: "from-emerald-500 to-emerald-600",
-    href: "/library/hs-search", // Пока ведем сюда же для демонстрации
+    href: "/library/logistics-calculator",
   },
   {
     id: 2,

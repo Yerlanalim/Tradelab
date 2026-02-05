@@ -1,0 +1,9 @@
+{
+  "country": "RU",
+  "currency": "RUB",
+  "import_vat": { "default_rate": 0.20, "reduced_rate": 0.10 },
+  "customs_fees": {
+    "type": "table",
+    "table_ref": "fees_ru_2026_01_01"
+  }
+}

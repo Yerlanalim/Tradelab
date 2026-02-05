@@ -178,4 +178,10 @@ body {
     font-weight: 700;
     color: white;
   }
+
+  select option {
+    background-color: white;
+    color: #111;
+  }
 }
+

@@ -1,0 +1,6 @@
+{
+  "base": "KZT",
+  "symbols": ["USD","EUR","RUB","CNY","KGS","AMD","BYN"],
+  "update_policy": "daily",
+  "timezone": "Asia/Almaty"
+}

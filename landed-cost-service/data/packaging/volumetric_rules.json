@@ -1,0 +1,6 @@
+{
+  "air": { "divisor_cm3_per_kg": 6000 },
+  "road": { "divisor_cm3_per_kg": 4000 },
+  "rail": { "divisor_cm3_per_kg": 4000 },
+  "sea": { "basis": "cbm", "min_cbm": 0.1 }
+}

@@ -1,0 +1,9 @@
+{
+  "country": "BY",
+  "currency": "BYR",
+  "import_vat": { "default_rate": 0.20, "reduced_rate": 0.10 },
+  "customs_fees": {
+    "type": "table",
+    "table_ref": "fees_by_2026_01_01"
+  }
+}

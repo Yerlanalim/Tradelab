@@ -10,6 +10,8 @@ import {
 import { createOpenAIClient } from './openai.js';
 import { createGoogleAIClient } from './google-ai.js';
 import { chatHandler } from './chat-handler.js';
+import calcRoutes from './calc/calc-routes.js';
+
 
 const app = express();
 
@@ -90,6 +92,9 @@ app.post('/chat', async (req: Request, res: Response) => {
     });
   }
 });
+
+// Calculation routes
+app.use('/api', calcRoutes);
 
 // Start server
 app.listen(PORT, () => {

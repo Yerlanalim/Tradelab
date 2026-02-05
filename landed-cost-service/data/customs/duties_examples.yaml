@@ -1,0 +1,17 @@
+- raw: "50%, но не менее 1 EUR за 1 кг"
+  expect:
+    kind: "max"
+    percent: 0.50
+    min:
+      currency: "EUR"
+      amount: 1
+      unit: "kg"
+
+- raw: "10% плюс 0.08 EUR за 1 кг"
+  expect:
+    kind: "sum"
+    percent: 0.10
+    specific:
+      currency: "EUR"
+      amount: 0.08
+      unit: "kg"
