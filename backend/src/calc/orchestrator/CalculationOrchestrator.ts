@@ -113,10 +113,16 @@ export class CalculationOrchestrator {
       
       // Determine status
       let status: 'ok' | 'incomplete' | 'escalation_required';
+      
+      const hasValidLandedCost = totals.landed_cost_range_usd !== null;
+
       if (requiresEscalation) {
         status = 'escalation_required';
-      } else if (allMissingInputs.length > 0 || hsResult.candidates.length === 0) {
+      } else if (allMissingInputs.length > 0 || hsResult.candidates.length === 0 || !hasValidLandedCost) {
         status = 'incomplete';
+        if (allMissingInputs.length === 0 && !hasValidLandedCost) {
+            allMissingInputs.push('valid_shipping_route_or_rates');
+        }
       } else {
         status = 'ok';
       }
@@ -126,7 +132,8 @@ export class CalculationOrchestrator {
         hsResult,
         allMissingInputs,
         allAssumptions,
-        allEscalationReasons
+        allEscalationReasons,
+        logisticsResult.is_defaulted_origin
       );
       
       // Normalize inputs
@@ -142,7 +149,8 @@ export class CalculationOrchestrator {
           schema_versions: {
             customs_value_rules_version: '1.0',
             config_version: 'v1.0'
-          }
+          },
+          is_defaulted_origin: logisticsResult.is_defaulted_origin
         },
         
         status,
@@ -271,9 +279,14 @@ export class CalculationOrchestrator {
     const isFreightIncludedInInvoice = ['CIF', 'CIP'].includes(passport.incoterms);
     
     let includedShipping: [number, number] | null = null;
-    if (borderUsd) {
-      const min = (isFreightIncludedInInvoice ? 0 : borderUsd[0]) + lastMileUsd[0];
-      const max = (isFreightIncludedInInvoice ? 0 : borderUsd[1]) + lastMileUsd[1];
+    
+    // If CIF/CIP, we don't need borderUsd to perform the sum (it's 0 addition).
+    // If EXW/FOB, we NEED borderUsd.
+    const effectiveBorderUsd = borderUsd || (isFreightIncludedInInvoice ? [0, 0] : null);
+
+    if (effectiveBorderUsd) {
+      const min = (isFreightIncludedInInvoice ? 0 : effectiveBorderUsd[0]) + lastMileUsd[0];
+      const max = (isFreightIncludedInInvoice ? 0 : effectiveBorderUsd[1]) + lastMileUsd[1];
       includedShipping = [min, max];
     }
     
@@ -304,7 +317,8 @@ export class CalculationOrchestrator {
     hsResult: HSResult,
     missingInputs: string[],
     assumptions: string[],
-    escalationReasons: string[]
+    escalationReasons: string[],
+    isDefaultedOrigin: boolean = false
   ): 'high' | 'medium' | 'low' {
     const topConfidence = hsResult.candidates.length > 0
       ? Math.max(...hsResult.candidates.map(c => c.confidence))
@@ -315,16 +329,21 @@ export class CalculationOrchestrator {
       m.includes('freight_to_border') || m.includes('hs_code') || m.includes('weight')
     );
     const hasHeuristicAssumptions = assumptions.some(a => 
-      a.includes('Insurance:') || a.includes('border_fraction') || a.includes('Last mile')
+      a.includes('Insurance:') || a.includes('border_fraction') // "Last mile" is standard, doesn't degrade confidence
     );
     
-    // HIGH: everything confirmed, no risks
+    // Check if logistics came from real rate cards
+    const hasLogisticsRateCard = assumptions.every(a => !a.includes('Freight calculated from 0 rate card')); 
+
+    // HIGH: real rate cards used, no critical warnings, explicit origin country
+    const isCleanLogistics = !hasHeuristicAssumptions && hasLogisticsRateCard && !isDefaultedOrigin;
+
     if (
       topConfidence >= 0.85 &&
       !hasRiskFlags &&
       missingInputs.length === 0 &&
       escalationReasons.length === 0 &&
-      !hasHeuristicAssumptions
+      isCleanLogistics
     ) {
       return 'high';
     }

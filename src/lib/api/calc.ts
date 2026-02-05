@@ -1,7 +1,7 @@
 
 export type CountryCode = 'RU' | 'KZ' | 'BY' | 'AM' | 'KG' | 'UZ' | 'TJ' | 'AZ' | 'GE';
 export type CurrencyCode = 'USD' | 'EUR' | 'CNY' | 'KZT' | 'RUB' | 'AMD' | 'BYN' | 'KGS' | 'UZS' | 'TJS' | 'AZN' | 'GEL';
-export type Incoterms = 'EXW' | 'FOB' | 'CIF' | 'DAP' | 'DDP';
+export type Incoterms = 'EXW' | 'FOB' | 'CIF' | 'DAP' | 'DDP' | 'CIP' | 'FCA';
 
 export interface DealPassport {
   dest_country: CountryCode;
@@ -12,6 +12,23 @@ export interface DealPassport {
   hs_code?: string;
   origin_city?: string;
   dest_city?: string;
+  origin_country?: CountryCode;
+  mode_preference?: 'air' | 'road' | 'rail' | 'sea';
+  invoice_includes_freight?: boolean;
+}
+
+export interface LogisticsScenario {
+    mode: 'air' | 'road' | 'rail' | 'sea';
+    lane_id: string;
+    transit_days_range: { min: number; max: number };
+    cost_usd_range: { min: number; max: number };
+    breakdown: {
+        freight_usd: number;
+        surcharges_usd?: number;
+        last_mile_usd?: number;
+    };
+    risks: string[];
+    score: number;
 }
 
 export interface CalculationPackage {
@@ -36,7 +53,7 @@ export interface CalculationPackage {
   };
   
   logistics: {
-    scenarios: any[];
+    scenarios: LogisticsScenario[];
     chargeable_weight_kg: number;
   };
 
@@ -143,12 +160,9 @@ export async function calculateLandedCost(passport: DealPassport): Promise<Calcu
   }
 
   if (data.logistics && data.logistics.scenarios) {
-    data.logistics.scenarios.forEach((s: any) => {
-      s.transit_days_range = normalizeRange(s.transit_days_range);
-      s.cost_usd_range = normalizeRange(s.cost_usd_range);
-    });
+      // Pass through objects, backend handles structure now.
+      // We do NOT normalize scenarios ranges because they are objects {min, max}, not arrays.
   }
 
   return data as CalculationPackage;
 }
-

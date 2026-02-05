@@ -1,4 +1,4 @@
-import { DealPassport, LogisticsResult, CostBreakdown, Source } from '../types/contracts';
+import { DealPassport, LogisticsResult, LogisticsScenario, Source } from '../types/contracts';
 import { DataCacheManager } from '../config/DataCacheManager';
 import { CurrencyConverter } from '../currency/CurrencyConverter';
 import { loadCityAliases } from '../config/loadConfig';
@@ -10,11 +10,12 @@ interface ShippingLane {
   dest_country: string;
   dest_city: string | null;
   enabled: boolean;
+  rate_id?: string;
 }
 
 interface RateCard {
   rate_id: string;
-  lane_id: string;
+  lane_id?: string;
   mode: 'air' | 'rail' | 'road' | 'sea';
   price_basis: string;
   rate_per_unit: number;
@@ -25,6 +26,8 @@ interface RateCard {
   risks: string[];
   active: boolean;
   config_version: string;
+  valid_from?: string;
+  valid_to?: string;
 }
 
 interface Surcharge {
@@ -76,9 +79,18 @@ export class LogisticsCalculator {
     // Normalize cities
     const originCity = this.normalizeCity(passport.origin_city);
     const destCity = this.normalizeCity(passport.dest_city);
-    const originCountry = passport.country_of_origin || 'CN';
+    let originCountry = passport.country_of_origin;
+    if (!originCountry) {
+        console.warn('[LogisticsCalculator] WARNING: No country_of_origin provided. Defaulting to CN.');
+        originCountry = 'CN';
+        result.assumptions.push('Origin country defaulted to China (CN)');
+        result.is_defaulted_origin = true;
+    }
 
     // Find matching lanes
+
+    console.log(`[Logistics] Finding lanes for Origin: ${originCountry}/${originCity}, Dest: ${passport.dest_country}/${destCity}`);
+
     const lanes = await this.findLanes(
       cache,
       originCountry,
@@ -87,9 +99,11 @@ export class LogisticsCalculator {
       destCity
     );
 
+    console.log(`[Logistics] Found ${lanes.length} lanes`);
+
     if (lanes.length === 0) {
       result.escalation_reasons.push('No shipping lane found for route');
-      result.missing_inputs.push('shipping_lane');
+      // result.missing_inputs.push('shipping_lane'); // Removed to avoid blocking
       return result;
     }
 
@@ -111,13 +125,41 @@ export class LogisticsCalculator {
 
     for (const lane of lanes) {
       try {
-        const rateCards = cache.query<RateCard>('calc_shipping_rate_cards', {
-          lane_id: lane.lane_id,
+        console.log(`[Logistics] Processing lane: ${lane.lane_id}`);
+        
+        const searchKey = (lane as any).rate_id ? 'rate_id' : 'lane_id';
+        const searchValue = (lane as any).rate_id || lane.lane_id;
+
+        const query: any = {
+          [searchKey]: searchValue,
           active: true
+        };
+
+        if (passport.mode_preference) {
+          query.mode = passport.mode_preference;
+        }
+
+        console.log(`[Logistics] Rate filter for lane ${lane.lane_id} (Strategy: ${searchKey}=${searchValue}):`, JSON.stringify(query));
+
+        const rawRateCards = cache.query<RateCard>('calc_shipping_rate_cards', query);
+
+        // Filter by date validity
+        const now = new Date();
+        const rateCards = rawRateCards.filter(rc => {
+            const from = rc.valid_from ? new Date(rc.valid_from) : null;
+            const to = rc.valid_to ? new Date(rc.valid_to) : null;
+            if (from && now < from) return false;
+            if (to && now > to) return false;
+            return true;
         });
 
+        console.log(`[Logistics] Found ${rateCards.length} active/valid rate cards for lane ${lane.lane_id} (Raw: ${rawRateCards.length})`);
+        if (rateCards.length > 0) {
+           console.log(`[Logistics] Rate card bases: ${rateCards.map(rc => rc.price_basis).join(', ')}`);
+        }
+
         if (rateCards.length === 0) {
-          result.assumptions.push(`No active rate cards for lane ${lane.lane_id}`);
+          result.assumptions.push(`No active/valid rate cards for lane ${lane.lane_id}`);
           continue;
         }
 
@@ -130,6 +172,8 @@ export class LogisticsCalculator {
 
           // Calculate base cost
           const baseCost = this.calculateBaseCost(rateCard, passport, converter);
+          
+          console.log(`[Logistics] Selected rate_id: ${rateCard.rate_id} (Mode: ${rateCard.mode}, BaseCost: ${baseCost})`);
 
           // Calculate surcharges
           const surcharges = cache.query<Surcharge>('calc_shipping_surcharges', {
@@ -172,6 +216,29 @@ export class LogisticsCalculator {
             rateId: rateCard.rate_id
           });
 
+          // Sanitize transit days
+          const transitRange: { min?: number; max?: number } = {};
+          if (rateCard.transit_days_min > 0) transitRange.min = rateCard.transit_days_min;
+          if (rateCard.transit_days_max > 0) transitRange.max = rateCard.transit_days_max;
+
+          // Populate scenario for response
+          result.scenarios.push({
+            mode: rateCard.mode,
+            lane_id: lane.lane_id,
+            transit_days_range: transitRange,
+            cost_usd_range: { 
+                min: Math.min(totalMin, totalMax), 
+                max: Math.max(totalMin, totalMax) 
+            },
+            breakdown: {
+                freight_usd: Math.max(0, baseCost),
+                surcharges_usd: surchargeTotal > 0.01 ? surchargeTotal : undefined,
+                last_mile_usd: lastMileTotal > 0.01 ? lastMileTotal : undefined
+            },
+            risks: rateCard.risks || [],
+            score: 100
+          });
+
           result.sources.push({
             type: 'supabase_table',
             ref: 'calc_shipping_rate_cards',
@@ -186,8 +253,16 @@ export class LogisticsCalculator {
 
     if (freightRanges.length === 0) {
       if (result.missing_inputs.length === 0) {
-        result.requires_escalation = true;
-        result.escalation_reasons.push('No valid freight calculations available');
+        // CIF/CIP: Missing freight is not critical for basic landed cost (since Invoice includes it)
+        // But for FOB/EXW/FCA it is critical for Customs Value 
+        const isCritical = !['CIF', 'CIP'].includes(passport.incoterms);
+
+        if (isCritical) {
+          result.requires_escalation = true;
+          result.escalation_reasons.push('No valid freight calculations available (required for ' + passport.incoterms + ')');
+        } else {
+           result.assumptions.push('No freight calculated (skipping logistics costs)');
+        }
       }
       return result;
     }
@@ -257,17 +332,38 @@ export class LogisticsCalculator {
     converter: CurrencyConverter
   ): number {
     let cost = 0;
+    
+    // Validate numeric inputs from Source
+    const rate = Number(rateCard.rate_per_unit);
+    const minCharge = Number(rateCard.min_charge);
 
-    if (rateCard.price_basis === 'kg') {
-      cost = rateCard.rate_per_unit * passport.weight_gross_kg;
-    } else if (rateCard.price_basis === 'cbm' && passport.volume_cbm) {
-      cost = rateCard.rate_per_unit * passport.volume_cbm;
-    } else {
-      throw new Error(`Unsupported price_basis: ${rateCard.price_basis}`);
+    if (!Number.isFinite(rate) || !Number.isFinite(minCharge)) {
+        throw new Error(`Invalid numeric data in rate card ${rateCard.rate_id}: rate=${rateCard.rate_per_unit}, min=${rateCard.min_charge}`);
+    }
+
+    const basis = rateCard.price_basis.toLowerCase();
+
+    // 1. Per Kg (with aliases)
+    if (['per_kg', 'kg', 'perkg'].includes(basis)) {
+        if (!passport.weight_gross_kg || passport.weight_gross_kg <= 0) {
+            throw new Error(`Weight required for price_basis '${basis}'`);
+        }
+        cost = rate * passport.weight_gross_kg;
+    } 
+    // 2. Per CBM
+    else if (basis === 'cbm' || basis === 'per_cbm') {
+        if (!passport.volume_cbm || passport.volume_cbm <= 0) {
+            // Note: In MVP calculate() might block this earlier, or assume 0
+            throw new Error(`Volume required for price_basis '${basis}'`);
+        }
+        cost = rate * passport.volume_cbm;
+    } 
+    else {
+      throw new Error(`Unsupported price_basis: '${rateCard.price_basis}'. Supported: per_kg, kg, cbm`);
     }
 
     // Apply minimum charge
-    cost = Math.max(cost, rateCard.min_charge);
+    cost = Math.max(cost, minCharge);
 
     // Convert to USD
     return converter.toInternal(cost, rateCard.currency);

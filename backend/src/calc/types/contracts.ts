@@ -142,6 +142,7 @@ export interface CustomsFee {
 // LogisticsResult
 export interface LogisticsResult {
   scenarios: LogisticsScenario[];
+  is_defaulted_origin?: boolean;
   
   chargeable_weight_kg: number;
   volumetric_weight_kg?: number;
@@ -159,17 +160,15 @@ export interface LogisticsResult {
 export interface LogisticsScenario {
   mode: 'air'|'rail'|'road'|'sea';
   lane_id: string;
-  transit_days_range: [number, number];
-  cost_usd_range: [number, number];
-  breakdown: CostBreakdown[];
+  transit_days_range: { min?: number; max?: number }; // or null
+  cost_usd_range: { min: number; max: number };
+  breakdown: {
+    freight_usd: number;
+    surcharges_usd?: number;
+    last_mile_usd?: number;
+  };
   risks: string[];
   score: number;
-}
-
-export interface CostBreakdown {
-  component: 'freight'|'fuel_surcharge'|'terminal'|'last_mile';
-  amount_range: [number, number];
-  currency: string;
 }
 
 // CalculationPackage
@@ -183,6 +182,7 @@ export interface CalculationPackage {
       customs_value_rules_version?: string;
       config_version?: string;
     };
+    is_defaulted_origin?: boolean;
   };
   
   status: 'ok' | 'incomplete' | 'escalation_required';

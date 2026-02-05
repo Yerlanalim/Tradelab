@@ -28,6 +28,7 @@ import {
 } from "@/lib/api/calc";
 import { SUPPORTED_COUNTRIES } from "@/lib/constants/countries";
 import { CalculatorPDF } from "@/components/pdf/CalculatorPDF";
+import { getRequirements } from "@/lib/calc/requirements";
 
 const PDFDownloadLink = dynamic(
   () => import("@react-pdf/renderer").then((mod) => mod.PDFDownloadLink),
@@ -42,6 +43,10 @@ export default function LogisticsCalculatorPage() {
     currency: 'USD',
     weight_gross_kg: 50,
     hs_code: '',
+    // Optional/New Fields initialized
+    origin_country: undefined,
+    mode_preference: undefined,
+    invoice_includes_freight: false,
   });
 
   const [result, setResult] = useState<CalcResult | null>(null);
@@ -91,9 +96,23 @@ export default function LogisticsCalculatorPage() {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: name === 'goods_value' || name === 'weight_gross_kg' ? parseFloat(value) || 0 : value
+      [name]: name === 'goods_value' || name === 'weight_gross_kg' ? (value === '' ? 0 : parseFloat(value) || 0) : value
     }));
   };
+
+  // Requirements Calculation
+  const requirements = getRequirements(formData.incoterms, { 
+      invoice_includes_freight: formData.invoice_includes_freight 
+  });
+
+  const missingFields = requirements.requiredFields.filter(f => {
+      const val = formData[f as keyof DealPassport];
+      if (typeof val === 'boolean') return false; // boolean is always present
+      if (typeof val === 'number') return isNaN(val) || val <= 0;
+      return !val || (val as string).trim() === '';
+  });
+
+  const isBlocked = missingFields.length > 0;
 
   const [isClient, setIsClient] = useState(false);
   const [orderInProgress, setOrderInProgress] = useState(false);
@@ -118,10 +137,22 @@ export default function LogisticsCalculatorPage() {
     setResult(null);
 
     try {
-      const data = await calculateLandedCost(formData as any);
+      // Clean payload: remove undefined/null/empty strings
+      const payload = Object.entries(formData).reduce((acc, [key, val]) => {
+          if (val !== undefined && val !== null && val !== '') {
+              // @ts-ignore
+              acc[key] = val;
+          }
+          return acc;
+      }, {} as DealPassport);
+      
+      const data = await calculateLandedCost(payload);
 
       if (data.status === 'incomplete') {
-        setError(`Missing required inputs: ${data.all_missing_inputs.join(', ')}`);
+        const missing = data.all_missing_inputs.length > 0 
+           ? data.all_missing_inputs.join(', ') 
+           : "Не удалось рассчитать итоговую сумму (возможно, нет маршрута)";
+        setError(`Расчёт неполон: ${missing}`);
       } else {
         setResult(data);
       }
@@ -254,20 +285,112 @@ export default function LogisticsCalculatorPage() {
                 )}
               </div>
 
-              <button 
-                onClick={handleCalculate}
-                disabled={isLoading}
-                className="w-full bg-linear-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 group disabled:opacity-50"
-              >
-                {isLoading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <>
-                    Рассчитать Landed Cost
-                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  </>
+                {/* DDP Warning */}
+               {requirements.isEscalation && (
+                  <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-xl flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-yellow-400 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-bold text-yellow-200">Требуется ручная проверка</p>
+                      <p className="text-xs text-yellow-200/60">
+                         Расчёт DDP требует подтверждения ставок и пошлин менеджером. 
+                         Вы можете отправить заявку для детального расчёта.
+                      </p>
+                    </div>
+                  </div>
                 )}
-              </button>
+
+               {/* Logistics Section (Conditional) */}
+               {requirements.visibleFields.includes('origin_country') && (
+                  <div className="space-y-4 pt-4 border-t border-white/5 animate-in fade-in slide-in-from-top-2">
+                     <h4 className="text-sm font-bold text-emerald-400 uppercase flex items-center gap-2">
+                        <Truck className="w-3 h-3" /> Логистика
+                     </h4>
+                     
+                     <div>
+                        <label className="block text-xs font-bold text-white/50 uppercase mb-2 ml-1">Страна отправления</label>
+                         <select 
+                            name="origin_country"
+                            value={formData.origin_country || ''}
+                            onChange={handleInputChange}
+                            className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white focus:border-emerald-500/50 focus:outline-hidden"
+                         >
+                            <option value="">Не выбрано</option>
+                            <option value="CN">Китай (CN)</option>
+                            <option value="TR">Турция (TR)</option>
+                            <option value="DE">Германия (DE)</option>
+                            <option value="KR">Корея (KR)</option>
+                            {/* Add more as needed */}
+                         </select>
+                     </div>
+                     {!formData.origin_country && (
+                        <div className="mt-2 flex items-start gap-2 text-yellow-500/80 text-xs px-1">
+                           <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                           <span>Пожалуйста, выберите страну отправления. Иначе расчёт будет выполнен для Китая (CN) по умолчанию.</span>
+                        </div>
+                     )}
+
+                     {requirements.visibleFields.includes('mode_preference') && (
+                         <div>
+                            <label className="block text-xs font-bold text-white/50 uppercase mb-2 ml-1">Вид транспорта</label>
+                             <select 
+                                name="mode_preference"
+                                value={formData.mode_preference || ''}
+                                onChange={handleInputChange}
+                                className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white focus:border-emerald-500/50 focus:outline-hidden"
+                             >
+                                <option value="">Авто-выбор</option>
+                                <option value="road">Авто (Фура)</option>
+                                <option value="rail">Ж/Д</option>
+                                <option value="air">Авиа</option>
+                                <option value="sea">Море</option>
+                             </select>
+                         </div>
+                     )}
+                  </div>
+               )}
+
+               {/* DAP Specific: Invoice Includes Freight */}
+               {formData.incoterms === 'DAP' && (
+                   <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10">
+                      <input 
+                        type="checkbox"
+                        id="invoice_includes_freight"
+                        name="invoice_includes_freight"
+                        checked={formData.invoice_includes_freight || false}
+                        onChange={(e) => setFormData(p => ({ ...p, invoice_includes_freight: e.target.checked }))}
+                        className="w-5 h-5 rounded border-white/20 bg-white/10 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                      />
+                      <label htmlFor="invoice_includes_freight" className="text-sm text-white/80 cursor-pointer">
+                          В инвойс включена доставка?
+                          <span className="block text-xs text-white/40">Если да, мы не будем считать фрахт</span>
+                      </label>
+                   </div>
+               )}
+
+              <div className="space-y-2">
+                  <button 
+                    onClick={handleCalculate}
+                    disabled={isLoading || isBlocked}
+                    className="w-full bg-linear-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isLoading ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        {requirements.isEscalation ? "Запросить расчёт" : "Рассчитать Landed Cost"}
+                        <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                      </>
+                    )}
+                  </button>
+                  
+                  {isBlocked && (
+                    <div className="text-center">
+                        <span className="text-xs text-red-400/80">
+                           Заполните обязательные поля: {missingFields.join(', ')}
+                        </span>
+                    </div>
+                  )}
+              </div>
             </div>
           </Section>
 
@@ -319,11 +442,26 @@ export default function LogisticsCalculatorPage() {
                     <TrendingUp className="w-4 h-4" />
                     Общая стоимость (Landed Cost)
                   </h3>
-                  <div className="text-5xl font-bold text-white mb-4">
-                    ${(result.totals.landed_cost_range_usd?.[0] || 0).toLocaleString()} – ${(result.totals.landed_cost_range_usd?.[1] || 0).toLocaleString()}
-                  </div>
+                  
+          
+                  {requirements.isEscalation ? (
+                      <div className="text-3xl font-bold text-white mb-4">
+                         ----
+                      </div>
+                  ) : result.totals.landed_cost_range_usd ? (
+                      <div className="text-5xl font-bold text-white mb-4">
+                        ${result.totals.landed_cost_range_usd[0].toLocaleString()} – ${result.totals.landed_cost_range_usd[1].toLocaleString()}
+                      </div>
+                  ) : (
+                      <div className="text-3xl font-bold text-white/50 mb-4">
+                         —
+                      </div>
+                  )}
+                  
                   <p className="text-white/60 text-sm max-w-md">
-                    Расчётная стоимость товара с учётом доставки до склада в {formData.dest_country} и всех таможенных платежей.
+                    {requirements.isEscalation 
+                        ? "Для условий DDP требуется уточнение ставок и пошлин брокером." 
+                        : `Расчётная стоимость товара с учётом доставки до склада в ${formData.dest_country} и всех таможенных платежей.`}
                   </p>
                 </div>
               </div>
@@ -344,11 +482,21 @@ export default function LogisticsCalculatorPage() {
                   <div className="space-y-4">
                     <div className="flex justify-between items-end border-b border-white/5 pb-2">
                       <span className="text-white/60 text-sm">Пошлина:</span>
-                      <span className="text-white font-mono font-bold">${result.duty_vat.duty.range_usd[0].toFixed(2)} – ${result.duty_vat.duty.range_usd[1].toFixed(2)}</span>
+                      <span className="text-white font-mono font-bold">
+                        {requirements.isEscalation 
+                          ? "--" 
+                          : `$${result.duty_vat.duty.range_usd[0].toFixed(2)} – ${result.duty_vat.duty.range_usd[1].toFixed(2)}`
+                        }
+                      </span>
                     </div>
                     <div className="flex justify-between items-end border-b border-white/5 pb-2">
                       <span className="text-white/60 text-sm">НДС ({(result.duty_vat.vat.rate * 100).toFixed(0)}%):</span>
-                      <span className="text-white font-mono font-bold">${result.duty_vat.vat.range_usd[0].toFixed(2)} – ${result.duty_vat.vat.range_usd[1].toFixed(2)}</span>
+                      <span className="text-white font-mono font-bold">
+                        {requirements.isEscalation 
+                          ? "--" 
+                          : `$${result.duty_vat.vat.range_usd[0].toFixed(2)} – ${result.duty_vat.vat.range_usd[1].toFixed(2)}`
+                        }
+                      </span>
                     </div>
                     {result.requires_escalation && (
                       <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg flex items-start gap-2 mt-4">
@@ -381,10 +529,10 @@ export default function LogisticsCalculatorPage() {
                       <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5 group hover:border-emerald-500/30 transition-all">
                         <div className="flex items-center gap-3">
                           <div className="text-xs font-bold text-emerald-400 uppercase">{s.mode}</div>
-                          <div className="text-[11px] text-white/40">{s.transit_days_range[0]}-{s.transit_days_range[1]} дн.</div>
+                          <div className="text-[11px] text-white/40">{s.transit_days_range.min}-{s.transit_days_range.max} дн.</div>
                         </div>
                         <div className="font-mono font-bold text-white">
-                          ${s.cost_usd_range[0].toFixed(0)}-${s.cost_usd_range[1].toFixed(0)}
+                          ${s.cost_usd_range.min.toFixed(0)}-${s.cost_usd_range.max.toFixed(0)}
                         </div>
                       </div>
                     ))}

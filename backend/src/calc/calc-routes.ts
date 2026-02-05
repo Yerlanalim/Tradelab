@@ -75,8 +75,21 @@ router.post('/calc/quote', async (req: Request, res: Response) => {
       });
     }
     
+    // Log request parameters
+    console.log('[calc/quote] Request params:', {
+      dest_country: passport.dest_country,
+      country_of_origin: passport.country_of_origin,
+      incoterms: passport.incoterms,
+      weight_gross_kg: passport.weight_gross_kg,
+      mode_preference: passport.mode_preference
+    });
+
     // Execute calculation
     const calculationPackage = await orchestrator.execute(passport);
+
+    // Log selected modes
+    const usedModes = calculationPackage.logistics?.scenarios?.map((s: any) => s.mode) || [];
+    console.log('[calc/quote] Final used modes:', usedModes);
     
     // Log completion
     console.log('[calc/quote] Calculation completed', {
