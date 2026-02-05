@@ -12,14 +12,9 @@ const router = express.Router();
 const orchestrator = new CalculationOrchestrator();
 
 /**
- * POST /api/calc/quote
+ * GET /api/hs/lookup
  * 
- * Calculate full quote including logistics, customs value, duty, and VAT
- * 
- * Returns:
- * - 200: Always for ok/incomplete/escalation_required statuses
- * - 400: Validation errors (missing required fields, invalid types)
- * - 500: Real failures (DB down, bugs)
+ * Proxy to TNVED service for HS code lookup (exact or prefix)
  */
 router.get('/hs/lookup', async (req: Request, res: Response) => {
   const code = req.query.code as string;
@@ -31,7 +26,10 @@ router.get('/hs/lookup', async (req: Request, res: Response) => {
     const response = await fetch(`http://127.0.0.1:${tnvedPort}/hs/code/${code}`);
     
     if (!response.ok) {
-       // if 404 from service (unlikely as it returns 200 with check), or 400
+       // Improve UX: 404/422 -> just { found: false }
+       if (response.status === 404 || response.status === 422) {
+         return res.json({ found: false });
+       }
        const errBody = await response.json().catch(() => ({}));
        return res.status(response.status).json(errBody);
     }
@@ -48,6 +46,11 @@ router.get('/hs/lookup', async (req: Request, res: Response) => {
  * POST /api/calc/quote
  * 
  * Calculate full quote including logistics, customs value, duty, and VAT
+ * 
+ * Returns:
+ * - 200: Always for ok/incomplete/escalation_required statuses
+ * - 400: Validation errors (missing required fields, invalid types)
+ * - 500: Real failures (DB down, bugs)
  */
 router.post('/calc/quote', async (req: Request, res: Response) => {
   const startTime = Date.now();

@@ -67,7 +67,7 @@ fastify.setErrorHandler((error, request, reply) => {
   request.log.error(error);
   
   reply.status(statusCode).send({
-    error: isProd ? 'Internal Server Error' : error.message,
+    error: isProd ? 'Internal Server Error' : (error as any).message,
     statusCode: statusCode,
     timestamp: new Date().toISOString()
   });

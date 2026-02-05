@@ -62,6 +62,51 @@ function normalizeRange(val: any): [number, number] | null {
   return null;
 }
 
+// Simple in-memory cache for HS lookup
+const hsLookupCache = new Map<string, HSCodeLookupResult | null>();
+
+export interface HSCodeLookupResult {
+  exact?: { code: string; clean_name: string; tariff_clean: string };
+  prefix_info?: { note: string; examples_4: any[]; examples_6: any[] };
+  matches?: any[];
+  found: boolean; // false if 404/422
+}
+
+export async function lookupHSCode(code: string, signal?: AbortSignal): Promise<HSCodeLookupResult | null> {
+  // Normalize locally before even checking cache
+  const cleanCode = code.replace(/\D/g, '').slice(0, 10);
+  if (cleanCode.length < 4) return null; // Too short
+
+  if (hsLookupCache.has(cleanCode)) {
+    return hsLookupCache.get(cleanCode) || null;
+  }
+
+  // Use NEXT_PUBLIC_LOCAL_BACKEND_URL to match .env convention
+  const baseURL = process.env.NEXT_PUBLIC_LOCAL_BACKEND_URL || 'http://localhost:3001';
+  
+  try {
+    const response = await fetch(`${baseURL}/api/hs/lookup?code=${cleanCode}`, {
+       signal
+    });
+
+    if (!response.ok) {
+        // If 503 or other server error, just return null (don't break UI)
+        return null;
+    }
+
+    const data = await response.json();
+    
+    // Cache result
+    hsLookupCache.set(cleanCode, data);
+    
+    return data;
+  } catch (e: any) {
+    if (e.name === 'AbortError') throw e;
+    hsLookupCache.set(cleanCode, null); // Cache failures as null to avoid spamming
+    return null;
+  }
+}
+
 export async function calculateLandedCost(passport: DealPassport): Promise<CalculationPackage> {
   // Use NEXT_PUBLIC_LOCAL_BACKEND_URL to match .env convention
   const baseURL = process.env.NEXT_PUBLIC_LOCAL_BACKEND_URL || 'http://localhost:3001';
@@ -106,3 +151,4 @@ export async function calculateLandedCost(passport: DealPassport): Promise<Calcu
 
   return data as CalculationPackage;
 }
+

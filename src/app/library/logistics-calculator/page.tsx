@@ -19,7 +19,13 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import dynamic from 'next/dynamic';
-import { calculateLandedCost, type DealPassport, type CalculationPackage as CalcResult } from "@/lib/api/calc";
+import { 
+  calculateLandedCost, 
+  lookupHSCode, 
+  type DealPassport, 
+  type CalculationPackage as CalcResult,
+  type HSCodeLookupResult 
+} from "@/lib/api/calc";
 import { SUPPORTED_COUNTRIES } from "@/lib/constants/countries";
 import { CalculatorPDF } from "@/components/pdf/CalculatorPDF";
 
@@ -41,6 +47,45 @@ export default function LogisticsCalculatorPage() {
   const [result, setResult] = useState<CalcResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // HS Lookup State
+  const [hsInfo, setHsInfo] = useState<HSCodeLookupResult | null>(null);
+  const [isLookupLoading, setIsLookupLoading] = useState(false);
+
+  // HS Lookup Effect
+  useEffect(() => {
+    const rawCode = formData.hs_code || '';
+    const cleanCode = rawCode.replace(/\D/g, '').slice(0, 10);
+    
+    // Threshold: 6 digits
+    if (cleanCode.length < 6) {
+        setHsInfo(null);
+        setIsLookupLoading(false);
+        return;
+    }
+
+    const controller = new AbortController();
+    
+    // Debounce 500ms
+    const timeoutId = setTimeout(async () => {
+        setIsLookupLoading(true);
+        try {
+            const data = await lookupHSCode(cleanCode, controller.signal);
+            if (!controller.signal.aborted) {
+                setHsInfo(data);
+            }
+        } catch (e) {
+            // ignore aborts or network errors
+        } finally {
+            if (!controller.signal.aborted) setIsLookupLoading(false);
+        }
+    }, 500);
+
+    return () => {
+        clearTimeout(timeoutId);
+        controller.abort();
+    };
+  }, [formData.hs_code]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -188,6 +233,25 @@ export default function LogisticsCalculatorPage() {
                   onChange={handleInputChange}
                   className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white focus:border-emerald-500/50 focus:outline-hidden"
                 />
+                
+                {/* HS Code Hint */}
+                {(hsInfo || isLookupLoading) && (
+                  <div className="mt-2 text-xs px-1 animate-in fade-in slide-in-from-top-1">
+                      {isLookupLoading ? (
+                         <span className="text-white/40 animate-pulse">Поиск кода...</span>
+                      ) : hsInfo?.found === false ? (
+                         <span className="text-white/30">Описание не найдено (будет использован общий тариф)</span>
+                      ) : hsInfo?.exact ? (
+                         <div className="text-emerald-400">
+                            <span className="font-bold">✓ {hsInfo.exact.code}:</span> {hsInfo.exact.clean_name}
+                         </div>
+                      ) : (hsInfo?.matches && hsInfo.matches.length > 0) ? (
+                         <div className="text-yellow-400/80">
+                            <span className="font-bold">Похоже на (префикс {(formData.hs_code || '').replace(/\D/g, '').slice(0, 6)}...):</span> {hsInfo.matches[0].clean_name.slice(0, 80)}...
+                         </div>
+                      ) : null}
+                  </div>
+                )}
               </div>
 
               <button 
