@@ -5,6 +5,7 @@ import {
   OPENAI_API_KEY, P3_SEARCH_MODEL, P3_BASE_MODEL, 
   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, 
   PORT,
+  CALC_ENGINE,
   GOOGLE_SEARCH_API_KEY, GOOGLE_SEARCH_CX, GOOGLE_GEMINI_KEY, GEMINI_MODEL, SERPER_API_KEY
 } from './config.js';
 import { createOpenAIClient } from './openai.js';
@@ -101,4 +102,5 @@ app.listen(PORT, () => {
   console.log(`🚀 TradeLab Backend running on http://localhost:${PORT}`);
   console.log(`🔗 Supabase URL: ${SUPABASE_URL || 'MISSING'}`);
   console.log(`🔑 Service Role Key: ${SUPABASE_SERVICE_ROLE_KEY ? 'CONFIGURED' : 'MISSING'}`);
+  console.log(`⚙️  Calc Engine Mode: ${CALC_ENGINE}`);
 });

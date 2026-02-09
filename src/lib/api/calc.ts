@@ -33,6 +33,9 @@ export interface LogisticsScenario {
 
 export interface CalculationPackage {
   status: 'ok' | 'incomplete' | 'escalation_required';
+  reason_codes: string[]; // Strict catalog codes
+  calculation_trace: any; // Detailed trace object (schema defined in backend)
+
   confidence_level: 'high' | 'medium' | 'low';
   requires_escalation: boolean;
   escalation_reasons: string[];
@@ -43,9 +46,19 @@ export interface CalculationPackage {
     landed_cost_range_usd: [number, number] | null;
     components: {
       product_cost_usd: number;
-      shipping_usd: [number, number] | null;
-      shipping_to_border_usd: [number, number] | null;
-      shipping_last_mile_usd: [number, number] | null;
+      shipping_usd: [number, number] | null; 
+      
+      // Breakdown of shipping:
+      shipping_to_border_usd: [number, number] | null; // Legacy/Total effective
+      shipping_last_mile_usd: [number, number] | null; // Legacy/Total effective
+
+      // New granular breakdown for debugging/display (CIF vs FOB etc)
+      estimated_border_freight_usd?: [number, number] | null;
+      added_border_freight_usd?: [number, number] | null;
+      
+      estimated_last_mile_freight_usd?: [number, number] | null;
+      added_last_mile_freight_usd?: [number, number] | null;
+
       duty_usd: [number, number] | null;
       vat_usd: [number, number] | null;
       fees_usd: number;

@@ -186,6 +186,8 @@ export interface CalculationPackage {
   };
   
   status: 'ok' | 'incomplete' | 'escalation_required';
+  reason_codes: string[];
+  calculation_trace: any;
   
   inputs_normalized: {
     dest_country: string;
@@ -207,6 +209,13 @@ export interface CalculationPackage {
       shipping_usd: [number, number] | null; // Total included in landed cost
       shipping_to_border_usd: [number, number] | null;
       shipping_last_mile_usd: [number, number] | null;
+      
+      // Granular breakdown
+      estimated_border_freight_usd: [number, number] | null;
+      added_border_freight_usd: [number, number] | null;
+      estimated_last_mile_freight_usd: [number, number] | null;
+      added_last_mile_freight_usd: [number, number] | null;
+
       duty_usd: [number, number];
       vat_usd: [number, number];
       fees_usd: number;

@@ -140,22 +140,11 @@ export class DutyVatCalculator {
       }
     }
 
-    if (dutyBreakdowns.length === 0) {
-      if (hsResult.candidates.length > 0) {
-        result.requires_escalation = true;
-        result.escalation_reasons.push('No valid duty calculations available');
-      }
-      return result;
-    }
-
-    result.duty.range_usd = [dutyMin, dutyMax];
-    result.duty.breakdown = dutyBreakdowns;
-
     // Calculate VAT
     const vatResult = await this.calculateVAT(
       passport,
       customsValue.customs_value_usd,
-      result.duty.range_usd,
+      dutyBreakdowns.length > 0 ? [dutyMin, dutyMax] : [0, 0],
       vatExempt
     );
 
@@ -167,6 +156,17 @@ export class DutyVatCalculator {
       result.requires_escalation = true;
       result.escalation_reasons.push(...vatResult.escalation_reasons);
     }
+
+    if (dutyBreakdowns.length === 0) {
+      if (hsResult.candidates.length > 0) {
+        result.requires_escalation = true;
+        result.escalation_reasons.push('No valid duty calculations available');
+      }
+      return result;
+    }
+
+    result.duty.range_usd = [dutyMin, dutyMax];
+    result.duty.breakdown = dutyBreakdowns;
 
     // Calculate total
     result.total_range_usd = [
@@ -275,19 +275,50 @@ export class DutyVatCalculator {
       return result;
     }
 
+    // Date validity check (String Comparison YYYY-MM-DD)
+    const todayStr = new Date().toISOString().split('T')[0];
+
     // Get VAT rate from config
-    const taxConfigs = this.cache.query<CountryTaxConfig>('calc_country_tax_config');
-    const countryConfig = taxConfigs.find(
-      c => c.country_code === passport.dest_country && c.active
+    const taxConfigs = this.cache.query<CountryTaxConfig & { valid_from?: string; valid_to?: string }>(
+      'calc_country_tax_config', 
+      { country_code: passport.dest_country }
     );
+
+    // Filter for active/valid config
+    const countryConfig = taxConfigs.find(c => {
+         // Active check (loose for migration: true or null/undefined)
+         const isActive = c.active === true || c.active === null || c.active === undefined;
+         if (!isActive) return false;
+
+         // Date validity check
+         if (c.valid_from && c.valid_from > todayStr) return false; // Future
+         if (c.valid_to && c.valid_to < todayStr) return false; // Past
+
+         return true;
+    });
 
     if (!countryConfig) {
       result.requires_escalation = true;
-      result.escalation_reasons.push(`VAT config missing for country ${passport.dest_country}`);
+      
+      // Diagnose validation failure
+      if (taxConfigs.length === 0) {
+          result.escalation_reasons.push(`VAT_CONFIG_NOT_FOUND: No config rows for ${passport.dest_country}`);
+      } else {
+          // Check the first candidate to determine specific reason
+          const candidate = taxConfigs[0];
+          const isActive = candidate.active === true || candidate.active === null || candidate.active === undefined;
+          
+          if (!isActive) {
+              result.escalation_reasons.push(`VAT_CONFIG_INACTIVE: Config is explicitly inactive for ${passport.dest_country}`);
+          } else {
+              result.escalation_reasons.push(`VAT_CONFIG_OUT_OF_DATE: Config valid only from ${candidate['valid_from']||'*'} to ${candidate['valid_to']||'*'}`);
+          }
+      }
+      
       return result;
     }
 
-    const vatRate = countryConfig.import_vat_default_rate;
+    const vatRate = Number(countryConfig.import_vat_default_rate);
     result.vat.rate = vatRate;
     
     // VAT base = customs_value + duty

@@ -57,3 +57,4 @@ if (DEBUG_ENV) {
   console.log('SEARCH STACK:', SERPER_API_KEY ? 'Serper.dev (Primary)' : (OPENAI_API_KEY ? 'OpenAI Search' : (GOOGLE_SEARCH_API_KEY ? 'Google Custom Search' : 'MISSING')));
   console.log('-----------------');
 }
+export const CALC_ENGINE = getEnv('CALC_ENGINE') || 'legacy';

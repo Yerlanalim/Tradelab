@@ -36,11 +36,9 @@ export class DataCacheManager {
     const errors: string[] = [];
 
     for (const table of tables) {
-      const statusColumn = table === 'calc_shipping_lanes' ? 'enabled' : 'active';
       const { data, error } = await this.supabase
         .from(table)
-        .select('*')
-        .eq(statusColumn, true);
+        .select('*');
       
       if (error) {
         const errorMsg = `Error refreshing cache for ${table}: ${error.message}`;

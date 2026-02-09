@@ -25,17 +25,41 @@ vi.mock('../src/calc/hs/HSClient', () => ({
 vi.mock('../src/calc/config/DataCacheManager', () => ({
   DataCacheManager: class {
     async ensureLoaded() { return; }
-    query(table: string) {
+    query(table: string, filters: Record<string, any> = {}) {
+      let data: any[] = [];
       if (table === 'calc_country_tax_config') {
-        return [{ country_code: 'RU', import_vat_default_rate: 0.2, active: true }];
+        data = [
+          { country_code: 'RU', import_vat_default_rate: 0.22, active: true },
+          { country_code: 'KZ', import_vat_default_rate: 0.16, active: true }
+        ];
+      } else if (table === 'calc_shipping_rate_cards') {
+        data = [{ 
+          rate_id: 'R1', 
+          lane_id: 'L1', 
+          mode: 'road',
+          price_basis: 'kg', 
+          active: true, 
+          rate_per_unit: 5, 
+          min_charge: 0, 
+          currency: 'USD',
+          transit_days_min: 1,
+          transit_days_max: 5,
+          risks: [],
+          config_version: '1.0'
+        }];
+      } else if (table === 'calc_shipping_lanes') {
+        data = [
+          { lane_id: 'L1', origin_country: 'CN', origin_city: null, dest_country: 'RU', dest_city: null, rate_id: 'R1', enabled: true },
+          { lane_id: 'L2', origin_country: 'CN', origin_city: null, dest_country: 'KZ', dest_city: null, rate_id: 'R1', enabled: true }
+        ];
       }
-      if (table === 'calc_shipping_rate_cards') {
-        return [{ rate_id: 'R1', lane_id: 'L1', price_basis: 'kg', active: true, rate_per_unit: 5, currency: 'USD' }];
-      }
-      if (table === 'calc_shipping_lanes') {
-        return [{ lane_id: 'L1', origin_country: 'CN', dest_country: 'RU', enabled: true }];
-      }
-      return [];
+
+      return data.filter(item => {
+        for (const [key, value] of Object.entries(filters)) {
+          if (item[key] !== value) return false;
+        }
+        return true;
+      });
     }
   }
 }));
@@ -106,5 +130,43 @@ describe('Backend Regressions', () => {
     const result = await orchestrator.execute(passport);
     expect(result.status).toBe('escalation_required');
     expect(result.escalation_reasons).toContain('HS tariff lookup failed for MISSING');
+  });
+
+  // Regression: VAT should be calculated even without HS code
+  it('should calculate VAT for KZ even without HS code (Test #1)', async () => {
+    const passport: DealPassport = {
+      dest_country: 'KZ',
+      incoterms: 'CIF',
+      goods_value: 1000,
+      currency: 'USD',
+      weight_gross_kg: 10,
+    } as any;
+
+    const result = await orchestrator.execute(passport);
+
+    expect(result.duty_vat.vat.rate).toBe(0.16);
+    expect(result.duty_vat.vat.base_formula).not.toBe('');
+    expect(result.reason_codes).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/^VAT_CONFIG_/)
+    ]));
+    // Should be incomplete because HS is missing, but VAT should be there
+    expect(result.status).toBe('incomplete');
+    expect(result.duty_vat.duty.range_usd).toEqual([0, 0]);
+  });
+
+  it('should calculate VAT for RU even without HS code (Test #2)', async () => {
+    const passport: DealPassport = {
+      dest_country: 'RU',
+      incoterms: 'FOB',
+      goods_value: 1000,
+      currency: 'USD',
+      weight_gross_kg: 10,
+    } as any;
+
+    const result = await orchestrator.execute(passport);
+
+    expect(result.duty_vat.vat.rate).toBe(0.22);
+    expect(result.duty_vat.vat.base_formula).not.toBe('');
+    expect(result.status).toBe('incomplete');
   });
 });

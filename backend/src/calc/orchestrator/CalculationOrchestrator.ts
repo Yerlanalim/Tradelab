@@ -12,6 +12,8 @@ import {
   aggregateMissingInputs,
   aggregateEscalationReasons
 } from './aggregate';
+import { ReasonCodeMapper } from './ReasonCodeMapper';
+import { CALC_ENGINE } from '../../config';
 
 export class CalculationOrchestrator {
   private currencyProvider: CurrencyProvider;
@@ -35,6 +37,92 @@ export class CalculationOrchestrator {
   }
   
   async execute(passport: DealPassport): Promise<CalculationPackage> {
+    const engine = CALC_ENGINE; 
+    const mode = ['legacy', 'v2', 'dual'].includes(engine) ? engine : 'legacy';
+
+    // 1. Legacy Run
+    if (mode === 'legacy') return this.runLegacy(passport);
+
+    // 2. Dual / V2
+    const legacyPromise = this.runLegacy(passport);
+    const v2Promise = this.runV2(passport);
+
+    if (mode === 'v2') return v2Promise;
+
+    // Dual Mode
+    const [legacyResult, v2Result] = await Promise.all([legacyPromise, v2Promise]);
+
+    // Compare
+    try {
+        const diff = this.compareResults(legacyResult, v2Result);
+        legacyResult.calculation_trace.engine_comparison = {
+             mode: 'dual',
+             timestamp: new Date().toISOString(),
+             v2_status: v2Result.status,
+             v2_confidence: v2Result.confidence_level,
+             v2_requires_escalation: v2Result.requires_escalation,
+             diff_summary: diff,
+             v2_reason_codes: v2Result.reason_codes
+        };
+    } catch (e: any) {
+        legacyResult.calculation_trace.engine_comparison = { error: e.message };
+    }
+
+    return legacyResult;
+  }
+
+  private async runV2(passport: DealPassport): Promise<CalculationPackage> {
+      // MVP V2: Currently identical to Legacy to establish baseline.
+      // In future steps, this will use RuleRepository and new logic.
+      return this.runLegacy(passport);
+  }
+
+  private compareResults(legacy: CalculationPackage, v2: CalculationPackage): any {
+      const diffs: any[] = [];
+      const tol = 0.01; // $0.01
+      const tolRate = 1e-9;
+
+      // Status
+      if (legacy.status !== v2.status) diffs.push({ path: 'status', legacy: legacy.status, v2: v2.status });
+      if (legacy.requires_escalation !== v2.requires_escalation) diffs.push({ path: 'requires_escalation', legacy: legacy.requires_escalation, v2: v2.requires_escalation });
+
+      // Customs Value
+      const lCV = legacy.customs_value.customs_value_usd;
+      const vCV = v2.customs_value.customs_value_usd;
+      if (Math.abs(lCV[0] - vCV[0]) > tol || Math.abs(lCV[1] - vCV[1]) > tol) {
+          diffs.push({ path: 'customs_value_usd', legacy: lCV, v2: vCV });
+      }
+
+      // VAT Rate
+      if (Math.abs(legacy.duty_vat.vat.rate - v2.duty_vat.vat.rate) > tolRate) {
+           diffs.push({ path: 'vat.rate', legacy: legacy.duty_vat.vat.rate, v2: v2.duty_vat.vat.rate });
+      }
+
+      // Totals
+      if (legacy.totals.landed_cost_range_usd && v2.totals.landed_cost_range_usd) {
+           const lTotal = legacy.totals.landed_cost_range_usd;
+           const vTotal = v2.totals.landed_cost_range_usd;
+           if (Math.abs(lTotal[0] - vTotal[0]) > tol || Math.abs(lTotal[1] - vTotal[1]) > tol) {
+               diffs.push({ path: 'landed_cost', legacy: lTotal, v2: vTotal });
+           }
+      } else if (legacy.totals.landed_cost_range_usd !== v2.totals.landed_cost_range_usd) {
+           diffs.push({ path: 'landed_cost', legacy: legacy.totals.landed_cost_range_usd, v2: v2.totals.landed_cost_range_usd });
+      }
+
+      // Reason Codes (Set comparison)
+      const lCodes = new Set(legacy.reason_codes);
+      const vCodes = new Set(v2.reason_codes);
+      if (lCodes.size !== vCodes.size || [...lCodes].some(c => !vCodes.has(c))) {
+           diffs.push({ path: 'reason_codes', legacy: legacy.reason_codes, v2: v2.reason_codes });
+      }
+
+      return {
+          diff_count: diffs.length,
+          diffs
+      };
+  }
+
+  private async runLegacy(passport: DealPassport): Promise<CalculationPackage> {
     const startTime = Date.now();
     
     try {
@@ -154,7 +242,34 @@ export class CalculationOrchestrator {
         },
         
         status,
+
+        reason_codes: ReasonCodeMapper.map(allMissingInputs, allEscalationReasons),
         
+        calculation_trace: { 
+            rule_version: 'v1.0',
+            components: {
+                 logistics: logisticsResult.scenarios[0] ? {
+                     mode: logisticsResult.scenarios[0].mode,
+                     transit_days: logisticsResult.scenarios[0].transit_days_range,
+                 } : null,
+                 customs_value: {
+                     formula: customsValueResult.formula_used,
+                     base_usd: customsValueResult.customs_value_usd
+                 },
+                 duty_vat: {
+                     vat_rate: dutyVatResult.vat.rate,
+                     base_formula: dutyVatResult.vat.base_formula
+                 }
+            },
+            selected_records: allSources.map(s => ({
+                 type: s.type,
+                 id: s.ref, 
+                 version: s.version 
+             })),
+            assumptions: allAssumptions,
+            warnings: allEscalationReasons
+        },
+
         inputs_normalized: {
           dest_country: passport.dest_country,
           incoterms: passport.incoterms,
@@ -192,6 +307,8 @@ export class CalculationOrchestrator {
             schema_versions: {}
           },
           status: 'escalation_required',
+          reason_codes: [],
+          calculation_trace: { rule_version: 'v1.0', error: error.message },
           inputs_normalized: {
             dest_country: passport.dest_country,
             incoterms: passport.incoterms,
@@ -242,6 +359,10 @@ export class CalculationOrchestrator {
               shipping_usd: null,
               shipping_to_border_usd: null,
               shipping_last_mile_usd: null,
+              estimated_border_freight_usd: null,
+              added_border_freight_usd: null,
+              estimated_last_mile_freight_usd: null,
+              added_last_mile_freight_usd: null,
               duty_usd: [0, 0],
               vat_usd: [0, 0],
               fees_usd: 0
@@ -279,15 +400,17 @@ export class CalculationOrchestrator {
     const isFreightIncludedInInvoice = ['CIF', 'CIP'].includes(passport.incoterms);
     
     let includedShipping: [number, number] | null = null;
+    let addedBorderFreight: [number, number] | null = null;
     
     // If CIF/CIP, we don't need borderUsd to perform the sum (it's 0 addition).
     // If EXW/FOB, we NEED borderUsd.
     const effectiveBorderUsd = borderUsd || (isFreightIncludedInInvoice ? [0, 0] : null);
 
     if (effectiveBorderUsd) {
-      const min = (isFreightIncludedInInvoice ? 0 : effectiveBorderUsd[0]) + lastMileUsd[0];
-      const max = (isFreightIncludedInInvoice ? 0 : effectiveBorderUsd[1]) + lastMileUsd[1];
-      includedShipping = [min, max];
+       addedBorderFreight = isFreightIncludedInInvoice ? [0, 0] : effectiveBorderUsd;
+       const min = addedBorderFreight[0] + lastMileUsd[0];
+       const max = addedBorderFreight[1] + lastMileUsd[1];
+       includedShipping = [min, max];
     }
     
     // Calculate landed cost only if we have all components
@@ -304,8 +427,14 @@ export class CalculationOrchestrator {
       components: {
         product_cost_usd: productCost,
         shipping_usd: includedShipping,
-        shipping_to_border_usd: borderUsd,
-        shipping_last_mile_usd: lastMileUsd,
+        shipping_to_border_usd: borderUsd, // Legacy ref -> Estimated
+        shipping_last_mile_usd: lastMileUsd, // Legacy ref -> Estimated/Added (usually same for last mile)
+        
+        estimated_border_freight_usd: borderUsd,
+        added_border_freight_usd: addedBorderFreight,
+        estimated_last_mile_freight_usd: lastMileUsd,
+        added_last_mile_freight_usd: lastMileUsd,
+
         duty_usd: dutyUsd,
         vat_usd: vatUsd,
         fees_usd: feesUsd

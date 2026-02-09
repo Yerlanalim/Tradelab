@@ -127,19 +127,27 @@ export class LogisticsCalculator {
       try {
         console.log(`[Logistics] Processing lane: ${lane.lane_id}`);
         
-        const searchKey = (lane as any).rate_id ? 'rate_id' : 'lane_id';
-        const searchValue = (lane as any).rate_id || lane.lane_id;
-
-        const query: any = {
-          [searchKey]: searchValue,
-          active: true
-        };
+        let query: any = { active: true };
+        let strategyLog = '';
 
         if (passport.mode_preference) {
+          // Strategy A: Explicit mode preference -> Search by lane_id + mode
+          query.lane_id = lane.lane_id;
           query.mode = passport.mode_preference;
+          strategyLog = `Mode Preference: ${passport.mode_preference} (lookup by lane_id)`;
+        } else {
+          // Strategy B: Default behavior -> Use strictly the default rate_id from lane
+          if (!(lane as any).rate_id) {
+            console.warn(`[Logistics] Lane ${lane.lane_id} missing rate_id. Skipping.`);
+            result.escalation_reasons.push(`MISSING_RATE_ID_ON_LANE: Lane ${lane.lane_id}`);
+            result.requires_escalation = true;
+            continue;
+          }
+          query.rate_id = (lane as any).rate_id;
+          strategyLog = `Default Rate: ${query.rate_id}`;
         }
 
-        console.log(`[Logistics] Rate filter for lane ${lane.lane_id} (Strategy: ${searchKey}=${searchValue}):`, JSON.stringify(query));
+        console.log(`[Logistics] Rate filter for lane ${lane.lane_id} (${strategyLog}):`, JSON.stringify(query));
 
         const rawRateCards = cache.query<RateCard>('calc_shipping_rate_cards', query);
 
@@ -159,7 +167,11 @@ export class LogisticsCalculator {
         }
 
         if (rateCards.length === 0) {
-          result.assumptions.push(`No active/valid rate cards for lane ${lane.lane_id}`);
+          if (passport.mode_preference) {
+            result.assumptions.push(`MISSING_RATE_CARD_FOR_MODE: ${passport.mode_preference} on lane ${lane.lane_id}`);
+          } else {
+            result.assumptions.push(`No active/valid default rate card for lane ${lane.lane_id}`);
+          }
           continue;
         }
 
@@ -184,7 +196,8 @@ export class LogisticsCalculator {
           const surchargeTotal = this.calculateSurcharges(
             surcharges,
             baseCost,
-            converter
+            converter,
+            result
           );
 
           // Calculate last mile (optional)
@@ -194,7 +207,7 @@ export class LogisticsCalculator {
           });
 
           const lastMileTotal = lastMileRecords.length > 0
-            ? converter.toInternal(lastMileRecords[0].base_rate, lastMileRecords[0].currency)
+            ? converter.toInternal(Number(lastMileRecords[0].base_rate), lastMileRecords[0].currency)
             : 0;
 
           if (lastMileRecords.length === 0) {
@@ -372,18 +385,30 @@ export class LogisticsCalculator {
   private calculateSurcharges(
     surcharges: Surcharge[],
     baseCost: number,
-    converter: CurrencyConverter
+    converter: CurrencyConverter,
+    result: LogisticsResult
   ): number {
     let total = 0;
 
     for (const surcharge of surcharges) {
+      if (surcharge.applies_to !== 'base_cost') {
+        result.assumptions.push(`UNSUPPORTED_SURCHARGE_APPLIES_TO: ${surcharge.applies_to} (id: ${surcharge.surcharge_id})`);
+        continue;
+      }
+
+      const amount = Number(surcharge.amount);
+      if (!Number.isFinite(amount)) {
+          console.warn(`[Logistics] Invalid surcharge amount: ${surcharge.amount} (id: ${surcharge.surcharge_id})`);
+          continue; 
+      }
+
       if (surcharge.type.includes('percent')) {
         // Percent surcharge: amount is already a fraction (0.12 = 12%)
-        total += baseCost * surcharge.amount;
+        total += baseCost * amount;
       } else {
         // Fixed surcharge: convert to USD
         const surchargeUSD = converter.toInternal(
-          surcharge.amount,
+          amount,
           surcharge.currency || 'USD'
         );
         total += surchargeUSD;
