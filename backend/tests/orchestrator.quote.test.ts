@@ -50,12 +50,30 @@ vi.mock('../src/calc/config/DataCacheManager', () => ({
     async ensureLoaded() {
       return undefined;
     }
-    query() {
-      return [{
-        country_code: 'KZ',
-        import_vat_default_rate: 0.12,
-        active: true
-      }];
+    query(table: string) {
+      if (table === 'calc_country_tax_config') {
+        return [{
+          country_code: 'KZ',
+          import_vat_default_rate: 0.12,
+          active: true
+        }];
+      }
+      if (table === 'calc_incoterms_rules') {
+        return [{
+          incoterms: 'CIF',
+          customs_components_in_base: [],
+          landed_components_in_total: ['product', 'duty', 'vat'],
+          critical_components: [],
+          unknown_policy: 'ASSUME_DEFAULT'
+        }, {
+          incoterms: 'DDP',
+          customs_components_in_base: ['border_freight', 'insurance'],
+          landed_components_in_total: ['product', 'duty', 'vat', 'shipping'],
+          critical_components: [],
+          unknown_policy: 'ESCALATE'
+        }];
+      }
+      return [];
     }
   }
 }));
@@ -82,6 +100,7 @@ describe('CalculationOrchestrator - Integration Test', () => {
   let orchestrator: CalculationOrchestrator;
 
   beforeEach(() => {
+    process.env.CALC_ENGINE = 'legacy';
     orchestrator = new CalculationOrchestrator();
   });
 

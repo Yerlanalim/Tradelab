@@ -4,7 +4,8 @@ import { DataCacheManager } from '../src/calc/config/DataCacheManager';
 import { CurrencyConverter } from '../src/calc/currency/CurrencyConverter';
 import { DealPassport, HSResult, CustomsValueResult, TariffInfo } from '../src/calc/types/contracts';
 import { UnsupportedTariffError } from '../src/calc/errors';
-import { vi } from 'vitest';
+import { ReasonCode, ReasonCodeMapper } from '../src/calc/orchestrator/ReasonCodeMapper';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 describe('DutyVatCalculator', () => {
   let calculator: DutyVatCalculator;
@@ -14,9 +15,16 @@ describe('DutyVatCalculator', () => {
 
   beforeEach(() => {
     // Setup converter
-    converter = new CurrencyConverter('USD');
+    converter = new CurrencyConverter();
     converter.setRate('USD', 1);
-    converter.setRate('EUR', 1.1);
+    converter.setRate('KZT', 470); // Rates relative to internal (USD)? Wait.
+    // In CurrencyConverter.ts: amountInKZT = amount * fromRate; return amountInKZT / toRate;
+    // So setRate set KZT per unit. If internal is USD, then setRate('USD', 1) is correct.
+    // And setRate('EUR', 1.1) means 1.1 KZT per EUR? No, that's not right.
+    // Actually, CurrencyConverter.ts uses KZT as pivot.
+    converter.setRate('KZT', 1);
+    converter.setRate('USD', 470);
+    converter.setRate('EUR', 520);
 
     // Mock HSClient
     mockHSClient = {
@@ -45,7 +53,8 @@ describe('DutyVatCalculator', () => {
         candidates: [{
           hs_code: '8471300000',
           confidence: 0.9,
-          description: 'Portable computers'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: false
       };
@@ -68,8 +77,8 @@ describe('DutyVatCalculator', () => {
         vat_exempt: false
       };
 
-      mockHSClient.getTariff.mockResolvedValue(tariffInfo);
-      mockCache.query.mockReturnValue([{
+      (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
+      (mockCache.query as any).mockReturnValue([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -98,7 +107,8 @@ describe('DutyVatCalculator', () => {
         candidates: [{
           hs_code: '1234567890',
           confidence: 0.85,
-          description: 'Test product'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: false
       };
@@ -123,8 +133,8 @@ describe('DutyVatCalculator', () => {
         vat_exempt: false
       };
 
-      mockHSClient.getTariff.mockResolvedValue(tariffInfo);
-      mockCache.query.mockReturnValue([{
+      (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
+      (mockCache.query as any).mockReturnValue([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -156,7 +166,8 @@ describe('DutyVatCalculator', () => {
         candidates: [{
           hs_code: '1234567890',
           confidence: 0.85,
-          description: 'Test product'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: false
       };
@@ -180,8 +191,8 @@ describe('DutyVatCalculator', () => {
         vat_exempt: false
       };
 
-      mockHSClient.getTariff.mockResolvedValue(tariffInfo);
-      mockCache.query.mockReturnValue([{
+      (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
+      (mockCache.query as any).mockReturnValue([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -209,7 +220,8 @@ describe('DutyVatCalculator', () => {
         candidates: [{
           hs_code: '1234567890',
           confidence: 0.85,
-          description: 'Test product'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: false
       };
@@ -235,8 +247,8 @@ describe('DutyVatCalculator', () => {
         vat_exempt: false
       };
 
-      mockHSClient.getTariff.mockResolvedValue(tariffInfo);
-      mockCache.query.mockReturnValue([{
+      (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
+      (mockCache.query as any).mockReturnValue([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -261,8 +273,8 @@ describe('DutyVatCalculator', () => {
 
       const hsResult: HSResult = {
         candidates: [
-          { hs_code: '1111111111', confidence: 0.6, description: 'Product A' },
-          { hs_code: '2222222222', confidence: 0.5, description: 'Product B' }
+          { hs_code: '1111111111', confidence: 0.6, rationale: [], risk_flags: [] },
+          { hs_code: '2222222222', confidence: 0.5, rationale: [], risk_flags: [] }
         ],
         requires_human_confirmation: true
       };
@@ -276,7 +288,7 @@ describe('DutyVatCalculator', () => {
         missing_inputs: []
       };
 
-      mockHSClient.getTariff
+      (mockHSClient.getTariff as any)
         .mockResolvedValueOnce({
           import_duty_raw: '10%',
           import_duty_parsed: { kind: 'advalorem', percent: 0.10 },
@@ -288,7 +300,7 @@ describe('DutyVatCalculator', () => {
           vat_exempt: false
         });
 
-      mockCache.query.mockReturnValue([{
+      (mockCache.query as any).mockReturnValue([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -319,7 +331,8 @@ describe('DutyVatCalculator', () => {
         candidates: [{
           hs_code: '1234567890',
           confidence: 0.85,
-          description: 'Test product'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: false
       };
@@ -339,8 +352,8 @@ describe('DutyVatCalculator', () => {
         vat_exempt: false
       };
 
-      mockHSClient.getTariff.mockResolvedValue(tariffInfo);
-      mockCache.query.mockReturnValue([{
+      (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
+      (mockCache.query as any).mockReturnValue([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -370,7 +383,8 @@ describe('DutyVatCalculator', () => {
         candidates: [{
           hs_code: '1234567890',
           confidence: 0.85,
-          description: 'Test product'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: false
       };
@@ -390,8 +404,8 @@ describe('DutyVatCalculator', () => {
         vat_exempt: true
       };
 
-      mockHSClient.getTariff.mockResolvedValue(tariffInfo);
-      mockCache.query.mockReturnValue([{
+      (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
+      (mockCache.query as any).mockReturnValue([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -419,7 +433,8 @@ describe('DutyVatCalculator', () => {
         candidates: [{
           hs_code: '1234567890',
           confidence: 0.85,
-          description: 'Test product'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: false
       };
@@ -444,8 +459,8 @@ describe('DutyVatCalculator', () => {
         vat_exempt: false
       };
 
-      mockHSClient.getTariff.mockResolvedValue(tariffInfo);
-      mockCache.query.mockReturnValue([{
+      (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
+      (mockCache.query as any).mockReturnValue([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -454,7 +469,8 @@ describe('DutyVatCalculator', () => {
       const result = await calculator.execute(passport, hsResult, customsValue);
 
       expect(result.requires_escalation).toBe(true);
-      expect(result.escalation_reasons.some(r => r.includes('Unsupported tariff'))).toBe(true);
+      const codes = ReasonCodeMapper.map([], result.escalation_reasons);
+      expect(codes).toContain(ReasonCode.TARIFF_NOT_SUPPORTED);
     });
 
     it('should escalate when HS lookup fails', async () => {
@@ -466,11 +482,19 @@ describe('DutyVatCalculator', () => {
         weight_gross_kg: 10
       };
 
+      (mockHSClient.getTariff as any).mockRejectedValue(new Error('Network error'));
+      (mockCache.query as any).mockReturnValue([{
+        country_code: 'KZ',
+        import_vat_default_rate: 0.12,
+        active: true
+      }]);
+
       const hsResult: HSResult = {
         candidates: [{
           hs_code: '1234567890',
           confidence: 0.85,
-          description: 'Test product'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: false
       };
@@ -484,22 +508,16 @@ describe('DutyVatCalculator', () => {
         missing_inputs: []
       };
 
-      mockHSClient.getTariff.mockRejectedValue(new Error('Network error'));
-      mockCache.query.mockReturnValue([{
-        country_code: 'KZ',
-        import_vat_default_rate: 0.12,
-        active: true
-      }]);
-
       const result = await calculator.execute(passport, hsResult, customsValue);
 
       expect(result.requires_escalation).toBe(true);
-      expect(result.escalation_reasons.some(r => r.includes('HS tariff lookup failed'))).toBe(true);
+      const codes = ReasonCodeMapper.map([], result.escalation_reasons);
+      expect(codes).toContain(ReasonCode.TARIFF_NOT_SUPPORTED);
     });
 
     it('should escalate when VAT config is missing', async () => {
       const passport: DealPassport = {
-        dest_country: 'UNKNOWN',
+        dest_country: 'AM',
         incoterms: 'FOB',
         goods_value: 1000,
         currency: 'USD',
@@ -510,7 +528,8 @@ describe('DutyVatCalculator', () => {
         candidates: [{
           hs_code: '1234567890',
           confidence: 0.85,
-          description: 'Test product'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: false
       };
@@ -530,13 +549,14 @@ describe('DutyVatCalculator', () => {
         vat_exempt: false
       };
 
-      mockHSClient.getTariff.mockResolvedValue(tariffInfo);
-      mockCache.query.mockReturnValue([]); // No VAT config
+      (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
+      (mockCache.query as any).mockReturnValue([]); // No VAT config
 
       const result = await calculator.execute(passport, hsResult, customsValue);
 
       expect(result.requires_escalation).toBe(true);
-      expect(result.escalation_reasons).toContain('VAT config missing for country UNKNOWN');
+      const codes = ReasonCodeMapper.map([], result.escalation_reasons);
+      expect(codes).toContain(ReasonCode.VAT_CONFIG_NOT_FOUND);
     });
 
     it('should escalate for low HS confidence', async () => {
@@ -552,7 +572,8 @@ describe('DutyVatCalculator', () => {
         candidates: [{
           hs_code: '1234567890',
           confidence: 0.5, // Low confidence
-          description: 'Test product'
+          rationale: [],
+          risk_flags: []
         }],
         requires_human_confirmation: true
       };
@@ -572,8 +593,8 @@ describe('DutyVatCalculator', () => {
         vat_exempt: false
       };
 
-      mockHSClient.getTariff.mockResolvedValue(tariffInfo);
-      mockCache.query.mockReturnValue([{
+      (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
+      (mockCache.query as any).mockReturnValue([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -582,7 +603,8 @@ describe('DutyVatCalculator', () => {
       const result = await calculator.execute(passport, hsResult, customsValue);
 
       expect(result.requires_escalation).toBe(true);
-      expect(result.escalation_reasons.some(r => r.includes('Low HS confidence'))).toBe(true);
+      const codes = ReasonCodeMapper.map([], result.escalation_reasons);
+      expect(codes).toContain(ReasonCode.HS_CONFIDENCE_LOW);
     });
   });
 });

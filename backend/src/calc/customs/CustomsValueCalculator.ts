@@ -108,6 +108,7 @@ export class CustomsValueCalculator {
       result.assumptions.push(
         `Insurance: ${(countryRules.insurance_rate * 100).toFixed(2)}% (config v${this.rules.version})`
       );
+      console.log(`[DEBUG] CustomsCalc Insurance: ${insuranceUSD} (rate: ${countryRules.insurance_rate}, invoice: ${invoiceUSD})`);
     }
     
     result.customs_value_usd = [min, max];

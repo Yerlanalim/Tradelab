@@ -25,6 +25,7 @@ export enum ReasonCode {
   HS_MULTIPLE_CANDIDATES = 'HS_MULTIPLE_CANDIDATES',
   HS_DUTY_PARSE_ERROR = 'HS_DUTY_PARSE_ERROR',
   TARIFF_NOT_SUPPORTED = 'TARIFF_NOT_SUPPORTED',
+  TNVED_LOOKUP_FAILED = 'TNVED_LOOKUP_FAILED',
   
   // Incoterms / Support
   INCOTERMS_NOT_SUPPORTED = 'INCOTERMS_NOT_SUPPORTED',
@@ -32,6 +33,7 @@ export enum ReasonCode {
   
   // Unknowns
   UNKNOWN_INCLUSION = 'UNKNOWN_INCLUSION', // generic for inclusion rules
+  ASSUMPTION_INCLUSION = 'ASSUMPTION_INCLUSION',
   
   // Fallback
   ESCALATION_REQUIRED = 'ESCALATION_REQUIRED',
@@ -47,7 +49,8 @@ export class ReasonCodeMapper {
 
     // Map missing inputs
     for (const input of missingInputs) {
-      if (input.includes('dest_country')) codes.add(ReasonCode.MISSING_DEST_COUNTRY);
+      if (input.includes('ASSUMPTION_')) codes.add(ReasonCode.ASSUMPTION_INCLUSION);
+      else if (input.includes('dest_country')) codes.add(ReasonCode.MISSING_DEST_COUNTRY);
       else if (input.includes('incoterms')) codes.add(ReasonCode.MISSING_INCOTERMS);
       else if (input.includes('goods_value')) codes.add(ReasonCode.MISSING_GOODS_VALUE);
       else if (input.includes('currency')) codes.add(ReasonCode.MISSING_CURRENCY);
@@ -60,7 +63,7 @@ export class ReasonCodeMapper {
     // Map escalation reasons
     for (const reason of escalationReasons) {
       // VAT
-      if (reason.includes('VAT_CONFIG_NOT_FOUND')) codes.add(ReasonCode.VAT_CONFIG_NOT_FOUND);
+      if (reason.includes('VAT_CONFIG_NOT_FOUND') || reason.includes('VAT config missing')) codes.add(ReasonCode.VAT_CONFIG_NOT_FOUND);
       else if (reason.includes('VAT_CONFIG_INACTIVE')) codes.add(ReasonCode.VAT_CONFIG_INACTIVE);
       else if (reason.includes('VAT_CONFIG_OUT_OF_DATE')) codes.add(ReasonCode.VAT_CONFIG_OUT_OF_DATE);
       
@@ -76,6 +79,7 @@ export class ReasonCodeMapper {
       else if (reason.includes('Multiple HS candidates')) codes.add(ReasonCode.HS_MULTIPLE_CANDIDATES);
       else if (reason.includes('No parsed duty')) codes.add(ReasonCode.HS_DUTY_PARSE_ERROR);
       else if (reason.includes('Unsupported tariff') || reason.includes('tariff lookup failed')) codes.add(ReasonCode.TARIFF_NOT_SUPPORTED);
+      else if (reason.includes('TNVED service error') || reason.includes('TNVED lookup failed')) codes.add(ReasonCode.TNVED_LOOKUP_FAILED);
       
       // Customs/Incoterms
       else if (reason.includes('DDP incoterms requires escalation')) codes.add(ReasonCode.INCOTERMS_DDP_NOT_SUPPORTED);

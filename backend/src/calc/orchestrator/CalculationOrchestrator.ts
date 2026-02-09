@@ -13,15 +13,19 @@ import {
   aggregateEscalationReasons
 } from './aggregate';
 import { ReasonCodeMapper } from './ReasonCodeMapper';
-import { CALC_ENGINE } from '../../config';
+import { RuleRepository } from '../rules/RuleRepository';
+import { CustomsValueCalculatorV2 } from '../customs/CustomsValueCalculatorV2';
+import { CALC_ENGINE, V2_CUSTOMS_VALUE_IMPL } from '../../config';
 
 export class CalculationOrchestrator {
   private currencyProvider: CurrencyProvider;
   private customsCalculator: CustomsValueCalculator;
+  private customsCalculatorV2: CustomsValueCalculatorV2;
   private dutyVatCalculator: DutyVatCalculator;
   private logisticsCalculator: LogisticsCalculator;
   private hsClient: HSClient;
   private dataCache: DataCacheManager;
+  private ruleRepository: RuleRepository;
   
   constructor() {
     this.currencyProvider = new CurrencyProvider();
@@ -34,36 +38,72 @@ export class CalculationOrchestrator {
       this.currencyProvider.converter
     );
     this.logisticsCalculator = new LogisticsCalculator();
+    this.ruleRepository = new RuleRepository(this.dataCache);
+    this.customsCalculatorV2 = new CustomsValueCalculatorV2(this.ruleRepository);
   }
   
   async execute(passport: DealPassport): Promise<CalculationPackage> {
-    const engine = CALC_ENGINE; 
+    const engine = process.env.CALC_ENGINE || CALC_ENGINE; 
     const mode = ['legacy', 'v2', 'dual'].includes(engine) ? engine : 'legacy';
 
     // 1. Legacy Run
     if (mode === 'legacy') return this.runLegacy(passport);
 
     // 2. Dual / V2
-    const legacyPromise = this.runLegacy(passport);
     const v2Promise = this.runV2(passport);
 
-    if (mode === 'v2') return v2Promise;
+    if (mode === 'v2') {
+        const softTimeoutMs = 5000;
+        const softTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), softTimeoutMs));
+        const result = await Promise.race([v2Promise, softTimeout]);
+        
+        if (result) return result;
+        
+        // Contractual Fallback for V2 timeout (Return incomplete instead of 500)
+        return {
+            status: 'incomplete',
+            requires_escalation: true,
+            confidence_level: 'low',
+            reason_codes: ['V2_TIMEOUT'],
+            calculation_trace: { 
+                v2_timeout: true,
+                error: `V2 Calculation exceeded ${softTimeoutMs}ms limit`
+            }
+        } as any;
+    }
 
-    // Dual Mode
-    const [legacyResult, v2Result] = await Promise.all([legacyPromise, v2Promise]);
+    // Dual Mode: Start legacy and apply timeout to V2
+    const legacyPromise = this.runLegacy(passport);
+    const v2Timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500));
+
+    const [legacyResult, v2Result] = await Promise.all([
+        legacyPromise, 
+        Promise.race([v2Promise, v2Timeout])
+    ]);
 
     // Compare
     try {
-        const diff = this.compareResults(legacyResult, v2Result);
-        legacyResult.calculation_trace.engine_comparison = {
-             mode: 'dual',
-             timestamp: new Date().toISOString(),
-             v2_status: v2Result.status,
-             v2_confidence: v2Result.confidence_level,
-             v2_requires_escalation: v2Result.requires_escalation,
-             diff_summary: diff,
-             v2_reason_codes: v2Result.reason_codes
-        };
+        if (v2Result) {
+            const diff = this.compareResults(legacyResult, v2Result);
+            legacyResult.calculation_trace.engine_comparison = {
+                 mode: 'dual',
+                 timestamp: new Date().toISOString(),
+                 v2_status: v2Result.status,
+                 v2_confidence: v2Result.confidence_level,
+                 v2_requires_escalation: v2Result.requires_escalation,
+                 v2_reason_codes: v2Result.reason_codes,
+                 v2_metadata: v2Result.calculation_trace.v2_metadata,
+                 diff_summary: diff
+            };
+        } else {
+            legacyResult.calculation_trace.engine_comparison = {
+                mode: 'dual',
+                timestamp: new Date().toISOString(),
+                v2_timeout: true,
+                v2_status: 'timeout',
+                diff_summary: { diff_count: null, diffs: [] }
+            };
+        }
     } catch (e: any) {
         legacyResult.calculation_trace.engine_comparison = { error: e.message };
     }
@@ -71,10 +111,343 @@ export class CalculationOrchestrator {
     return legacyResult;
   }
 
+  private normalizeIntake(passport: DealPassport) {
+    const notes: any[] = [];
+    const input: DealPassport = { ...passport };
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // Default origin country to "CN"
+    if (!input.country_of_origin) {
+      input.country_of_origin = 'CN';
+      notes.push({ field: 'country_of_origin', original: null, normalized: 'CN', reason: 'Defaulting to CN' });
+    }
+
+    // mode_preference vs shipping_mode (normalization)
+    // For now we just ensure it's present if available
+    
+    // Semantics normalization (tri-state)
+    const toTriState = (val: boolean | undefined | null): 'yes' | 'no' | 'unknown' => {
+      if (val === true) return 'yes';
+      if (val === false) return 'no';
+      return 'unknown';
+    };
+
+    (input as any).v2_freight_inclusion = toTriState(passport.invoice_includes_freight);
+    (input as any).v2_insurance_inclusion = toTriState(passport.invoice_includes_insurance);
+
+    return { 
+      input, 
+      notes, 
+      metadata: { todayStr } 
+    };
+  }
+
+  private mapCustomsV2ToContract(v2: any, incoterms: string): CustomsValueResult {
+      return {
+          customs_value_usd: [v2.customs_value_usd, v2.customs_value_usd],
+          breakdown: {
+              invoice_value_usd: v2.breakdown.invoice_value_usd,
+              freight_to_border_usd: v2.breakdown.added_freight_usd > 0 ? [v2.breakdown.added_freight_usd, v2.breakdown.added_freight_usd] : undefined,
+              insurance_usd: v2.breakdown.added_insurance_usd
+          },
+          formula_used: `V2-${incoterms}`,
+          assumptions: v2.assumptions,
+          sources: [], 
+          missing_inputs: v2.missing_inputs,
+          // Internal V2 metadata for total assembly
+          v2_meta: {
+              added_freight: v2.breakdown.added_freight_usd,
+              added_insurance: v2.breakdown.added_insurance_usd
+          }
+      } as any;
+  }
+
   private async runV2(passport: DealPassport): Promise<CalculationPackage> {
-      // MVP V2: Currently identical to Legacy to establish baseline.
-      // In future steps, this will use RuleRepository and new logic.
-      return this.runLegacy(passport);
+    const startTime = Date.now();
+    
+    // 1. Normalization
+    const { input, notes, metadata } = this.normalizeIntake(passport);
+
+    try {
+      // 2. Rule Selection (Read-only for now)
+      const selectedRules: any[] = [];
+      try {
+          const incotermsRule = await this.ruleRepository.getIncotermsRule(input.incoterms);
+          selectedRules.push({
+              rule_id: `${input.incoterms}_INCOTERMS`,
+              type: 'incoterms',
+              version: 'v1.0.0',
+              matched_by: { incoterms: input.incoterms },
+              priority: 1
+          });
+          
+          await this.ruleRepository.getInsuranceRule(input.dest_country, input.incoterms);
+          selectedRules.push({
+              rule_id: `INSURANCE_ALL`,
+              type: 'insurance',
+              version: 'v1.0.0',
+              matched_by: 'global_fallback',
+              priority: 0
+          });
+      } catch (e: any) {
+          notes.push({ rule_error: e.message });
+      }
+
+      // 3. Pipeline Execution (Using legacy components for now)
+      await this.currencyProvider.fetchRates();
+      await this.dataCache.ensureLoaded();
+
+      const hsResult: HSResult = {
+        candidates: input.hs_code ? [{
+          hs_code: input.hs_code,
+          confidence: input.hs_confidence || 0.95,
+          rationale: ['Provided by user'],
+          risk_flags: []
+        }] : [],
+        requires_human_confirmation: false
+      };
+
+      const logisticsResult = await this.logisticsCalculator.calculate(
+        input,
+        this.dataCache,
+        this.currencyProvider.converter
+      );
+
+      // --- Customs Value Phase ---
+      let customsValueResult: CustomsValueResult;
+      // Allow override from process.env for tests, fallback to config
+      const customsImpl = process.env.V2_CUSTOMS_VALUE_IMPL || V2_CUSTOMS_VALUE_IMPL; 
+
+      if (customsImpl === 'v2') {
+          const freightVal = logisticsResult.freight_to_border_usd ? logisticsResult.freight_to_border_usd[0] : null;
+          const v2Raw = await this.customsCalculatorV2.calculate(
+              input as any,
+              freightVal,
+              this.dataCache,
+              this.currencyProvider.converter
+          );
+          customsValueResult = this.mapCustomsV2ToContract(v2Raw, input.incoterms);
+          notes.push({ customs_impl: 'v2', diff_risk: 'high' });
+      } else {
+          customsValueResult = this.customsCalculator.calculate(
+              input,
+              logisticsResult,
+              this.currencyProvider.converter
+          );
+          notes.push({ customs_impl: 'legacy' });
+      }
+
+      const dutyVatResult = await this.dutyVatCalculator.execute(
+        input,
+        hsResult,
+        customsValueResult
+      );
+
+      const totals = this.assembleTotals(
+        input,
+        logisticsResult,
+        customsValueResult,
+        dutyVatResult
+      );
+
+      // 4. Trace & Metadata Assembly
+      const allSources = aggregateSources([
+        customsValueResult.sources,
+        dutyVatResult.sources,
+        logisticsResult.sources
+      ]);
+
+      const allAssumptions = aggregateAssumptions([
+        customsValueResult.assumptions,
+        dutyVatResult.assumptions,
+        logisticsResult.assumptions
+      ]);
+
+      const allMissingInputs = aggregateMissingInputs([
+        customsValueResult.missing_inputs,
+        dutyVatResult.missing_inputs,
+        logisticsResult.missing_inputs
+      ]);
+
+      const allEscalationReasons = aggregateEscalationReasons([
+        dutyVatResult.escalation_reasons,
+        logisticsResult.escalation_reasons
+      ]);
+
+      const requiresEscalation = dutyVatResult.requires_escalation || logisticsResult.requires_escalation;
+      let status: 'ok' | 'incomplete' | 'escalation_required';
+      const hasValidLandedCost = totals.landed_cost_range_usd !== null;
+
+      if (requiresEscalation) {
+        status = 'escalation_required';
+      } else if (allMissingInputs.length > 0 || hsResult.candidates.length === 0 || !hasValidLandedCost) {
+        status = 'incomplete';
+        if (allMissingInputs.length === 0 && !hasValidLandedCost) {
+            allMissingInputs.push('valid_shipping_route_or_rates');
+        }
+      } else {
+        status = 'ok';
+      }
+
+      const confidenceLevel = this.calculateConfidenceLevel(
+        hsResult,
+        allMissingInputs,
+        allAssumptions,
+        allEscalationReasons,
+        logisticsResult.is_defaulted_origin
+      );
+
+      const goodsValueUSD = this.currencyProvider.converter.toInternal(
+        input.goods_value,
+        input.currency
+      );
+
+      return {
+        meta: {
+          query_time_ms: Date.now() - startTime,
+          calculation_timestamp: new Date().toISOString(),
+          schema_versions: {
+            customs_value_rules_version: '1.0',
+            config_version: 'v1.0'
+          },
+          is_defaulted_origin: logisticsResult.is_defaulted_origin
+        },
+        status,
+        reason_codes: ReasonCodeMapper.map(allMissingInputs, allEscalationReasons),
+        calculation_trace: {
+          rule_version: 'v1.0',
+          v2_metadata: {
+            normalization_notes: notes,
+            selected_rules: selectedRules,
+            engine_versions: {
+              rule_repo: 'v1.0.0'
+            }
+          },
+          components: {
+            logistics: logisticsResult.scenarios[0] ? {
+              mode: logisticsResult.scenarios[0].mode,
+              transit_days: logisticsResult.scenarios[0].transit_days_range,
+            } : null,
+            customs_value: {
+              formula: customsValueResult.formula_used,
+              base_usd: customsValueResult.customs_value_usd
+            },
+            duty_vat: {
+              vat_rate: dutyVatResult.vat.rate,
+              base_formula: dutyVatResult.vat.base_formula
+            }
+          },
+          selected_records: allSources.map(s => ({ type: s.type, id: s.ref, version: s.version })),
+          assumptions: allAssumptions,
+          warnings: allEscalationReasons
+        },
+        inputs_normalized: {
+          dest_country: input.dest_country,
+          incoterms: input.incoterms,
+          goods_value_usd: goodsValueUSD,
+          weight_gross_kg: input.weight_gross_kg,
+          hs_code: input.hs_code
+        },
+        hs_classification: hsResult.candidates.length > 0 ? hsResult : undefined,
+        logistics: logisticsResult,
+        customs_value: customsValueResult,
+        duty_vat: dutyVatResult,
+        totals,
+        all_assumptions: allAssumptions,
+        all_sources: allSources,
+        all_missing_inputs: allMissingInputs,
+        requires_escalation: requiresEscalation,
+        escalation_reasons: allEscalationReasons,
+        confidence_level: confidenceLevel
+      };
+    } catch (error) {
+      if (error instanceof CustomsEscalationError) {
+        const queryTime = Date.now() - startTime;
+        return {
+          meta: {
+            query_time_ms: queryTime,
+            calculation_timestamp: new Date().toISOString(),
+            schema_versions: {}
+          },
+          status: 'escalation_required',
+          reason_codes: [],
+          calculation_trace: { 
+            rule_version: 'v1.0', 
+            error: error.message,
+            v2_metadata: {
+                normalization_notes: notes,
+                engine_versions: { rule_repo: 'v1.0.0' }
+            }
+          },
+          inputs_normalized: {
+            dest_country: input.dest_country,
+            incoterms: input.incoterms,
+            goods_value_usd: input.goods_value,
+            weight_gross_kg: input.weight_gross_kg,
+            hs_code: input.hs_code
+          },
+          logistics: {
+            scenarios: [],
+            chargeable_weight_kg: input.weight_gross_kg,
+            assumptions: [],
+            sources: [],
+            missing_inputs: [],
+            requires_escalation: false,
+            escalation_reasons: []
+          },
+          customs_value: {
+            customs_value_usd: [0, 0],
+            breakdown: { invoice_value_usd: 0 },
+            formula_used: '',
+            assumptions: [],
+            sources: [],
+            missing_inputs: []
+          },
+          duty_vat: {
+            duty: {
+              range_usd: [0, 0],
+              breakdown: [],
+              base_formula: ''
+            },
+            vat: {
+              rate: 0,
+              range_usd: [0, 0],
+              base_formula: ''
+            },
+            fees_usd: [],
+            total_range_usd: [0, 0],
+            assumptions: [],
+            sources: [],
+            missing_inputs: [],
+            requires_escalation: true,
+            escalation_reasons: [error.message]
+          },
+          totals: {
+            landed_cost_range_usd: null,
+            components: {
+              product_cost_usd: 0,
+              shipping_usd: null,
+              shipping_to_border_usd: null,
+              shipping_last_mile_usd: null,
+              estimated_border_freight_usd: null,
+              added_border_freight_usd: null,
+              estimated_last_mile_freight_usd: null,
+              added_last_mile_freight_usd: null,
+              duty_usd: [0, 0],
+              vat_usd: [0, 0],
+              fees_usd: 0
+            }
+          },
+          all_assumptions: [],
+          all_sources: [],
+          all_missing_inputs: [],
+          requires_escalation: true,
+          escalation_reasons: [error.message],
+          confidence_level: 'low'
+        };
+      }
+      throw error;
+    }
   }
 
   private compareResults(legacy: CalculationPackage, v2: CalculationPackage): any {
@@ -402,12 +775,22 @@ export class CalculationOrchestrator {
     let includedShipping: [number, number] | null = null;
     let addedBorderFreight: [number, number] | null = null;
     
-    // If CIF/CIP, we don't need borderUsd to perform the sum (it's 0 addition).
-    // If EXW/FOB, we NEED borderUsd.
+    // V2 specific: if V2 already added freight to customs base, 
+    // we use that for addedBorderFreight to be consistent.
+    const v2Meta = (customsValue as any).v2_meta;
+    const v2AddedFreight = v2Meta?.added_freight;
+    
+    if (v2AddedFreight !== undefined && v2AddedFreight > 0) {
+        addedBorderFreight = [v2AddedFreight, v2AddedFreight];
+    }
+
     const effectiveBorderUsd = borderUsd || (isFreightIncludedInInvoice ? [0, 0] : null);
 
-    if (effectiveBorderUsd) {
+    if (effectiveBorderUsd && !addedBorderFreight) {
        addedBorderFreight = isFreightIncludedInInvoice ? [0, 0] : effectiveBorderUsd;
+    }
+
+    if (addedBorderFreight) {
        const min = addedBorderFreight[0] + lastMileUsd[0];
        const max = addedBorderFreight[1] + lastMileUsd[1];
        includedShipping = [min, max];

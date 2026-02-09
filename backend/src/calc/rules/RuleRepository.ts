@@ -5,7 +5,7 @@ export interface IncotermsRule {
   customs_components_in_base: string[];
   landed_components_in_total: string[];
   critical_components: string[];
-  unknown_policy: 'INCOMPLETE_ONLY' | 'SCENARIO_RANGE' | 'ESCALATE';
+  unknown_policy: 'INCOMPLETE_ONLY' | 'SCENARIO_RANGE' | 'ESCALATE' | 'ASSUME_DEFAULT';
 }
 
 export interface InclusionRule {
@@ -39,9 +39,9 @@ export class RuleRepository {
     const rule = rules[0];
     return {
       incoterms: rule.incoterms,
-      customs_components_in_base: rule.customs_components_in_base,
-      landed_components_in_total: rule.landed_components_in_total,
-      critical_components: rule.critical_components,
+      customs_components_in_base: rule.customs_components_in_base ?? [],
+      landed_components_in_total: rule.landed_components_in_total ?? [],
+      critical_components: rule.critical_components ?? [],
       unknown_policy: rule.unknown_policy
     };
   }

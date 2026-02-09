@@ -1,0 +1,162 @@
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90m/home/nail/Documents/Projects/TradeLab/Tradelab[39m
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mBasic freight calculation[2m > [22m[2mshould calculate base cost for single lane + rate card (per kg)
+[22m[39m[Logistics] Finding lanes for Origin: CN/Shanghai, Dest: KZ/Almaty
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mBasic freight calculation[2m > [22m[2mshould calculate base cost for single lane + rate card (per kg)
+[22m[39m[Logistics] Found 1 lanes
+[Logistics] Processing lane: CN_SH_KZ_ALA
+[Logistics] Rate filter for lane CN_SH_KZ_ALA (Default Rate: RATE_001): {"active":true,"rate_id":"RATE_001"}
+[Logistics] Found 1 active/valid rate cards for lane CN_SH_KZ_ALA (Raw: 1)
+[Logistics] Rate card bases: kg
+[Logistics] Selected rate_id: RATE_001 (Mode: air, BaseCost: 250)
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mBasic freight calculation[2m > [22m[2mshould apply minimum charge when base cost is below minimum
+[22m[39m[Logistics] Finding lanes for Origin: CN/null, Dest: KZ/null
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mBasic freight calculation[2m > [22m[2mshould apply minimum charge when base cost is below minimum
+[22m[39m[Logistics] Found 1 lanes
+[Logistics] Processing lane: CN_KZ_DEFAULT
+[Logistics] Rate filter for lane CN_KZ_DEFAULT (Default Rate: RATE_002): {"active":true,"rate_id":"RATE_002"}
+[Logistics] Found 1 active/valid rate cards for lane CN_KZ_DEFAULT (Raw: 1)
+[Logistics] Rate card bases: kg
+[Logistics] Selected rate_id: RATE_002 (Mode: sea, BaseCost: 200)
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mSurcharges[2m > [22m[2mshould calculate percent surcharge correctly
+[22m[39m[Logistics] Finding lanes for Origin: CN/null, Dest: KZ/null
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mSurcharges[2m > [22m[2mshould calculate percent surcharge correctly
+[22m[39m[Logistics] Found 1 lanes
+[Logistics] Processing lane: CN_KZ
+[Logistics] Rate filter for lane CN_KZ (Default Rate: RATE_003): {"active":true,"rate_id":"RATE_003"}
+[Logistics] Found 1 active/valid rate cards for lane CN_KZ (Raw: 1)
+[Logistics] Rate card bases: kg
+[Logistics] Selected rate_id: RATE_003 (Mode: air, BaseCost: 200)
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mSurcharges[2m > [22m[2mshould calculate fixed surcharge with currency conversion
+[22m[39m[Logistics] Finding lanes for Origin: CN/null, Dest: KZ/null
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mSurcharges[2m > [22m[2mshould calculate fixed surcharge with currency conversion
+[22m[39m[Logistics] Found 1 lanes
+[Logistics] Processing lane: CN_KZ
+[Logistics] Rate filter for lane CN_KZ (Default Rate: RATE_004): {"active":true,"rate_id":"RATE_004"}
+[Logistics] Found 1 active/valid rate cards for lane CN_KZ (Raw: 1)
+[Logistics] Rate card bases: kg
+[Logistics] Selected rate_id: RATE_004 (Mode: rail, BaseCost: 150)
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mMultiple lanes and escalation[2m > [22m[2mshould aggregate ranges from multiple lanes and set escalation flag
+[22m[39m[Logistics] Finding lanes for Origin: CN/null, Dest: KZ/null
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mMultiple lanes and escalation[2m > [22m[2mshould aggregate ranges from multiple lanes and set escalation flag
+[22m[39m[Logistics] Found 2 lanes
+[Logistics] Processing lane: CN_KZ_AIR
+[Logistics] Rate filter for lane CN_KZ_AIR (Default Rate: RATE_AIR): {"active":true,"rate_id":"RATE_AIR"}
+[Logistics] Found 0 active/valid rate cards for lane CN_KZ_AIR (Raw: 0)
+[Logistics] Processing lane: CN_KZ_SEA
+[Logistics] Rate filter for lane CN_KZ_SEA (Default Rate: RATE_SEA): {"active":true,"rate_id":"RATE_SEA"}
+[Logistics] Found 0 active/valid rate cards for lane CN_KZ_SEA (Raw: 0)
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mMissing data and escalation[2m > [22m[2mshould escalate when weight is missing for per_kg rate
+[22m[39m[Logistics] Finding lanes for Origin: CN/null, Dest: KZ/null
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mMissing data and escalation[2m > [22m[2mshould escalate when weight is missing for per_kg rate
+[22m[39m[Logistics] Found 1 lanes
+[Logistics] Processing lane: CN_KZ
+[Logistics] Rate filter for lane CN_KZ (Default Rate: RATE_005): {"active":true,"rate_id":"RATE_005"}
+[Logistics] Found 1 active/valid rate cards for lane CN_KZ (Raw: 1)
+[Logistics] Rate card bases: kg
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mMissing data and escalation[2m > [22m[2mshould escalate when no lane is found
+[22m[39m[Logistics] Finding lanes for Origin: CN/null, Dest: AM/null
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mMissing data and escalation[2m > [22m[2mshould escalate when no lane is found
+[22m[39m[Logistics] Found 0 lanes
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mCurrency conversion[2m > [22m[2mshould convert rate card currency to USD
+[22m[39m[Logistics] Finding lanes for Origin: CN/null, Dest: KZ/null
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mCurrency conversion[2m > [22m[2mshould convert rate card currency to USD
+[22m[39m[Logistics] Found 1 lanes
+[Logistics] Processing lane: CN_KZ
+[Logistics] Rate filter for lane CN_KZ (Default Rate: RATE_KZT): {"active":true,"rate_id":"RATE_KZT"}
+[Logistics] Found 1 active/valid rate cards for lane CN_KZ (Raw: 1)
+[Logistics] Rate card bases: kg
+[Logistics] Selected rate_id: RATE_KZT (Mode: rail, BaseCost: 212.7659574468085)
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mCity normalization[2m > [22m[2mshould normalize city names using aliases
+[22m[39m[Logistics] Finding lanes for Origin: CN/Shanghai, Dest: KZ/Almaty
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mCity normalization[2m > [22m[2mshould normalize city names using aliases
+[22m[39m[Logistics] Found 1 lanes
+[Logistics] Processing lane: CN_SH_KZ_ALA
+[Logistics] Rate filter for lane CN_SH_KZ_ALA (Default Rate: RATE_006): {"active":true,"rate_id":"RATE_006"}
+[Logistics] Found 1 active/valid rate cards for lane CN_SH_KZ_ALA (Raw: 1)
+[Logistics] Rate card bases: kg
+[Logistics] Selected rate_id: RATE_006 (Mode: air, BaseCost: 250)
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mFreight to border validation[2m > [22m[2mshould ensure freight_to_border excludes last mile
+[22m[39m[Logistics] Finding lanes for Origin: CN/null, Dest: KZ/null
+
+[90mstdout[2m | backend/tests/logisticsCalculator.test.ts[2m > [22m[2mLogisticsCalculator[2m > [22m[2mFreight to border validation[2m > [22m[2mshould ensure freight_to_border excludes last mile
+[22m[39m[Logistics] Found 1 lanes
+[Logistics] Processing lane: CN_KZ
+[Logistics] Rate filter for lane CN_KZ (Default Rate: RATE_007): {"active":true,"rate_id":"RATE_007"}
+[Logistics] Found 1 active/valid rate cards for lane CN_KZ (Raw: 1)
+[Logistics] Rate card bases: kg
+[Logistics] Selected rate_id: RATE_007 (Mode: air, BaseCost: 200)
+
+ [31m❯[39m backend/tests/logisticsCalculator.test.ts [2m([22m[2m10 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 19[2mms[22m[39m
+       [32m✓[39m should calculate base cost for single lane + rate card (per kg)[32m 5[2mms[22m[39m
+       [32m✓[39m should apply minimum charge when base cost is below minimum[32m 1[2mms[22m[39m
+       [32m✓[39m should calculate percent surcharge correctly[32m 1[2mms[22m[39m
+       [32m✓[39m should calculate fixed surcharge with currency conversion[32m 1[2mms[22m[39m
+[31m       [31m×[31m should aggregate ranges from multiple lanes and set escalation flag[39m[32m 6[2mms[22m[39m
+       [32m✓[39m should escalate when weight is missing for per_kg rate[32m 1[2mms[22m[39m
+[31m       [31m×[31m should escalate when no lane is found[39m[32m 1[2mms[22m[39m
+       [32m✓[39m should convert rate card currency to USD[32m 1[2mms[22m[39m
+       [32m✓[39m should normalize city names using aliases[32m 1[2mms[22m[39m
+       [32m✓[39m should ensure freight_to_border excludes last mile[32m 1[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m backend/tests/logisticsCalculator.test.ts[2m > [22mLogisticsCalculator[2m > [22mMultiple lanes and escalation[2m > [22mshould aggregate ranges from multiple lanes and set escalation flag
+[31m[1mAssertionError[22m: expected undefined to deeply equal [ 100, 300 ][39m
+
+[32m- Expected:[39m 
+[
+  100,
+  300,
+]
+
+[31m+ Received:[39m 
+undefined
+
+[36m [2m❯[22m backend/tests/logisticsCalculator.test.ts:[2m351:44[22m[39m
+    [90m349| [39m      [90m// Sea: 100 * 1 = 100 USD[39m
+    [90m350| [39m      [90m// Range: [100, 300][39m
+    [90m351| [39m      [34mexpect[39m(result[33m.[39mfreight_to_border_usd)[33m.[39m[34mtoEqual[39m([[34m100[39m[33m,[39m [34m300[39m])[33m;[39m
+    [90m   | [39m                                           [31m^[39m
+    [90m352| [39m      [34mexpect[39m(result[33m.[39mrequires_escalation)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m353| [39m      expect(result.escalation_reasons).toContain('Multiple lanes foun…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m backend/tests/logisticsCalculator.test.ts[2m > [22mLogisticsCalculator[2m > [22mMissing data and escalation[2m > [22mshould escalate when no lane is found
+[31m[1mAssertionError[22m: expected [] to include 'shipping_lane'[39m
+[36m [2m❯[22m backend/tests/logisticsCalculator.test.ts:[2m422:37[22m[39m
+    [90m420| [39m      [34mexpect[39m(result[33m.[39mrequires_escalation)[33m.[39m[34mtoBe[39m([35mfalse[39m)[33m;[39m
+    [90m421| [39m      expect(result.escalation_reasons).toContain('No shipping lane fo…
+    [90m422| [39m      [34mexpect[39m(result[33m.[39mmissing_inputs)[33m.[39m[34mtoContain[39m([32m'shipping_lane'[39m)[33m;[39m
+    [90m   | [39m                                    [31m^[39m
+    [90m423| [39m      [34mexpect[39m(result[33m.[39mfreight_to_border_usd)[33m.[39m[34mtoBeUndefined[39m()[33m;[39m
+    [90m424| [39m    })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m8 passed[39m[22m[90m (10)[39m
+[2m   Start at [22m 10:41:43
+[2m   Duration [22m 224ms[2m (transform 79ms, setup 0ms, import 96ms, tests 19ms, environment 0ms)[22m
+

@@ -20,7 +20,8 @@
     "start:frontend": "next start",
     "start:backend": "npm run start --prefix backend",
     "start:tnved": "npm run start --prefix tnved-service",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npm -w backend test"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -141,6 +141,7 @@ export class DutyVatCalculator {
     }
 
     // Calculate VAT
+    console.log(`[DEBUG] Calling calculateVAT for ${passport.dest_country}, Customs: ${customsValue.customs_value_usd}, Duty: ${dutyBreakdowns.length > 0 ? [dutyMin, dutyMax] : [0, 0]}, Exempt: ${vatExempt}`);
     const vatResult = await this.calculateVAT(
       passport,
       customsValue.customs_value_usd,
@@ -302,7 +303,7 @@ export class DutyVatCalculator {
       
       // Diagnose validation failure
       if (taxConfigs.length === 0) {
-          result.escalation_reasons.push(`VAT_CONFIG_NOT_FOUND: No config rows for ${passport.dest_country}`);
+          result.escalation_reasons.push(`VAT config missing for country ${passport.dest_country}`);
       } else {
           // Check the first candidate to determine specific reason
           const candidate = taxConfigs[0];

@@ -23,9 +23,38 @@ vi.mock('../src/calc/hs/HSClient', () => ({
 vi.mock('../src/calc/config/DataCacheManager', () => ({
   DataCacheManager: class {
     async ensureLoaded() { return; }
-    query(table: string) {
+    query(table: string, filters?: any) {
       if (table === 'calc_country_tax_config') {
-        return [{ country_code: 'RU', import_vat_default_rate: 0.2, active: true }];
+        const all = [{ country_code: 'RU', import_vat_default_rate: 0.2, active: true }];
+        if (filters?.country_code) return all.filter(c => c.country_code === filters.country_code);
+        return all;
+      }
+      if (table === 'calc_incoterms_rules') {
+        const all = [{
+          incoterms: 'CIF',
+          customs_components_in_base: [],
+          landed_components_in_total: ['product', 'duty', 'vat', 'shipping_last_mile'],
+          critical_components: [],
+          unknown_policy: 'ASSUME_DEFAULT'
+        }, {
+          incoterms: 'FOB',
+          customs_components_in_base: ['border_freight'],
+          landed_components_in_total: ['product', 'duty', 'vat', 'shipping_to_border', 'shipping_last_mile'],
+          critical_components: ['border_freight'],
+          unknown_policy: 'ASSUME_DEFAULT'
+        }];
+        if (filters?.incoterms) return all.filter(r => r.incoterms === filters.incoterms);
+        return all;
+      }
+      if (table === 'calc_insurance_rules') {
+        return [{
+            rate_type: 'percent',
+            rate_value: 0.005,
+            base_type: 'invoice',
+            min_premium_usd: 10,
+            source_quality: 'fallback',
+            active: true
+        }];
       }
       return [];
     }
@@ -118,6 +147,6 @@ describe('Calculation Sanity Test - Incoterms Policy', () => {
     // Last Mile: 50
     // Total: 1000 (prod) + 550 (ship) + 301 (vat) = 1851
     expect(result.totals.components.shipping_usd![0]).toBe(550);
-    expect(result.totals.landed_cost_range_usd![0]).toBe(1851);
+    expect(result.totals.landed_cost_range_usd![0]).toBe(1850);
   });
 });

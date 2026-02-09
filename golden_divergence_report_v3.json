@@ -1,0 +1,299 @@
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90m/home/nail/Documents/Projects/TradeLab/Tradelab[39m
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m[CurrencyProvider] Rates loaded from Supabase (date: 2026-02-05)
+
+[90mstdout[2m | backend/tests/fixtures/golden_runner.test.ts[2m > [22m[2mGolden Divergence Reporter[2m > [22m[2mGenerates detailed divergence report
+[22m[39m
+=== GOLDEN DIVERGENCE REPORT ===
+
+[
+  {
+    "case": "CIF-KZ-OK",
+    "diff_count": 2,
+    "diffs": [
+      {
+        "path": "status",
+        "legacy": "ok",
+        "v2": "incomplete"
+      },
+      {
+        "path": "reason_codes",
+        "legacy": [],
+        "v2": [
+          "MISSING_INPUT"
+        ]
+      }
+    ],
+    "v2_selected_rules": [
+      {
+        "rule_id": "CIF_INCOTERMS",
+        "type": "incoterms",
+        "version": "v1.0.0",
+        "matched_by": {
+          "incoterms": "CIF"
+        },
+        "priority": 1
+      },
+      {
+        "rule_id": "INSURANCE_ALL",
+        "type": "insurance",
+        "version": "v1.0.0",
+        "matched_by": "global_fallback",
+        "priority": 0
+      }
+    ],
+    "v2_customs_impl": "v2",
+    "status_legacy": "ok",
+    "status_v2": "incomplete"
+  },
+  {
+    "case": "DAP-KZ-UNKNOWN",
+    "diff_count": 2,
+    "diffs": [
+      {
+        "path": "customs_value_usd",
+        "legacy": [
+          50300,
+          50300
+        ],
+        "v2": [
+          50000,
+          50000
+        ]
+      },
+      {
+        "path": "landed_cost",
+        "legacy": [
+          61869.6,
+          61869.6
+        ],
+        "v2": [
+          61800,
+          61800
+        ]
+      }
+    ],
+    "v2_selected_rules": [
+      {
+        "rule_id": "DAP_INCOTERMS",
+        "type": "incoterms",
+        "version": "v1.0.0",
+        "matched_by": {
+          "incoterms": "DAP"
+        },
+        "priority": 1
+      },
+      {
+        "rule_id": "INSURANCE_ALL",
+        "type": "insurance",
+        "version": "v1.0.0",
+        "matched_by": "global_fallback",
+        "priority": 0
+      }
+    ],
+    "v2_customs_impl": "v2",
+    "status_legacy": "incomplete",
+    "status_v2": "incomplete"
+  },
+  {
+    "case": "FOB-RU-RAIL",
+    "diff_count": 4,
+    "diffs": [
+      {
+        "path": "status",
+        "legacy": "ok",
+        "v2": "incomplete"
+      },
+      {
+        "path": "customs_value_usd",
+        "legacy": [
+          100700,
+          100700
+        ],
+        "v2": [
+          100000,
+          100000
+        ]
+      },
+      {
+        "path": "landed_cost",
+        "legacy": [
+          123562.4,
+          123562.4
+        ],
+        "v2": [
+          123400,
+          123400
+        ]
+      },
+      {
+        "path": "reason_codes",
+        "legacy": [],
+        "v2": [
+          "MISSING_INPUT"
+        ]
+      }
+    ],
+    "v2_selected_rules": [
+      {
+        "rule_id": "FOB_INCOTERMS",
+        "type": "incoterms",
+        "version": "v1.0.0",
+        "matched_by": {
+          "incoterms": "FOB"
+        },
+        "priority": 1
+      },
+      {
+        "rule_id": "INSURANCE_ALL",
+        "type": "insurance",
+        "version": "v1.0.0",
+        "matched_by": "global_fallback",
+        "priority": 0
+      }
+    ],
+    "v2_customs_impl": "v2",
+    "status_legacy": "ok",
+    "status_v2": "incomplete"
+  },
+  {
+    "case": "CIF-RU-VAT",
+    "diff_count": 2,
+    "diffs": [
+      {
+        "path": "status",
+        "legacy": "ok",
+        "v2": "incomplete"
+      },
+      {
+        "path": "reason_codes",
+        "legacy": [],
+        "v2": [
+          "MISSING_INPUT"
+        ]
+      }
+    ],
+    "v2_selected_rules": [
+      {
+        "rule_id": "CIF_INCOTERMS",
+        "type": "incoterms",
+        "version": "v1.0.0",
+        "matched_by": {
+          "incoterms": "CIF"
+        },
+        "priority": 1
+      },
+      {
+        "rule_id": "INSURANCE_ALL",
+        "type": "insurance",
+        "version": "v1.0.0",
+        "matched_by": "global_fallback",
+        "priority": 0
+      }
+    ],
+    "v2_customs_impl": "v2",
+    "status_legacy": "ok",
+    "status_v2": "incomplete"
+  },
+  {
+    "case": "DEFAULT-ORIGIN",
+    "diff_count": 4,
+    "diffs": [
+      {
+        "path": "status",
+        "legacy": "ok",
+        "v2": "incomplete"
+      },
+      {
+        "path": "customs_value_usd",
+        "legacy": [
+          50450,
+          50450
+        ],
+        "v2": [
+          50000,
+          50000
+        ]
+      },
+      {
+        "path": "landed_cost",
+        "legacy": [
+          61904.4,
+          61904.4
+        ],
+        "v2": [
+          61800,
+          61800
+        ]
+      },
+      {
+        "path": "reason_codes",
+        "legacy": [],
+        "v2": [
+          "MISSING_INPUT"
+        ]
+      }
+    ],
+    "v2_selected_rules": [
+      {
+        "rule_id": "FOB_INCOTERMS",
+        "type": "incoterms",
+        "version": "v1.0.0",
+        "matched_by": {
+          "incoterms": "FOB"
+        },
+        "priority": 1
+      },
+      {
+        "rule_id": "INSURANCE_ALL",
+        "type": "insurance",
+        "version": "v1.0.0",
+        "matched_by": "global_fallback",
+        "priority": 0
+      }
+    ],
+    "v2_customs_impl": "v2",
+    "status_legacy": "ok",
+    "status_v2": "incomplete"
+  }
+]
+
+================================
+
+
+ [32m✓[39m backend/tests/fixtures/golden_runner.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 10[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m   Start at [22m 09:45:32
+[2m   Duration [22m 282ms[2m (transform 136ms, setup 0ms, import 171ms, tests 10ms, environment 0ms)[22m
+

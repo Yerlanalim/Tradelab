@@ -19,13 +19,25 @@ vi.mock('../src/calc/hs/HSClient', () => ({
 vi.mock('../src/calc/config/DataCacheManager', () => ({
   DataCacheManager: class {
     async ensureLoaded() { return; }
-    query(table: string) {
+    query(table: string, filters?: any) {
       if (table === 'calc_country_tax_config') {
-        // ONLY RU/KZ configured
-        return [
+        const all = [
           { country_code: 'RU', import_vat_default_rate: 0.2, active: true },
           { country_code: 'KZ', import_vat_default_rate: 0.12, active: true }
         ];
+        if (filters?.country_code) {
+          return all.filter(c => c.country_code === filters.country_code);
+        }
+        return all;
+      }
+      if (table === 'calc_incoterms_rules') {
+        return [{
+          incoterms: 'CIF',
+          customs_components_in_base: [],
+          landed_components_in_total: ['product', 'duty', 'vat', 'shipping_last_mile'],
+          critical_components: [],
+          unknown_policy: 'ASSUME_DEFAULT'
+        }];
       }
       return [];
     }
