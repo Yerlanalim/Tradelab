@@ -2,6 +2,7 @@
   "units": [
     {"pattern": "кг|kg", "normalized": "kg"},
     {"pattern": "1\\s*000\\s*шт|1000\\s*pcs", "normalized": "1000pcs"},
+    {"pattern": "шт|pcs|pce|штук", "normalized": "pcs"},
     {"pattern": "л|l|литр", "normalized": "l"},
     {"pattern": "м2|m2|кв\\.?м", "normalized": "m2"},
     {"pattern": "см3|cm3|мл|ml", "normalized": "cm3"},
