@@ -2,6 +2,7 @@ import { DealPassport, LogisticsResult, LogisticsScenario, Source } from '../typ
 import { DataCacheManager } from '../config/DataCacheManager';
 import { CurrencyConverter } from '../currency/CurrencyConverter';
 import { loadCityAliases } from '../config/loadConfig';
+import { logger } from '../../logger';
 
 interface ShippingLane {
   lane_id: string;
@@ -81,7 +82,7 @@ export class LogisticsCalculator {
     const destCity = this.normalizeCity(passport.dest_city);
     let originCountry = passport.country_of_origin;
     if (!originCountry) {
-        console.warn('[LogisticsCalculator] WARNING: No country_of_origin provided. Defaulting to CN.');
+        logger.warn('No country_of_origin provided, defaulting to CN');
         originCountry = 'CN';
         result.assumptions.push('Origin country defaulted to China (CN)');
         result.is_defaulted_origin = true;
@@ -89,7 +90,7 @@ export class LogisticsCalculator {
 
     // Find matching lanes
 
-    console.log(`[Logistics] Finding lanes for Origin: ${originCountry}/${originCity}, Dest: ${passport.dest_country}/${destCity}`);
+    logger.debug('Finding lanes', { origin: `${originCountry}/${originCity}`, dest: `${passport.dest_country}/${destCity}` });
 
     const lanes = await this.findLanes(
       cache,
@@ -99,7 +100,7 @@ export class LogisticsCalculator {
       destCity
     );
 
-    console.log(`[Logistics] Found ${lanes.length} lanes`);
+    logger.debug('Lanes found', { count: lanes.length });
 
     if (lanes.length === 0) {
       result.escalation_reasons.push('No shipping lane found for route');
@@ -125,7 +126,7 @@ export class LogisticsCalculator {
 
     for (const lane of lanes) {
       try {
-        console.log(`[Logistics] Processing lane: ${lane.lane_id}`);
+        logger.debug('Processing lane', { lane_id: lane.lane_id });
         
         let query: any = { active: true };
         let strategyLog = '';
@@ -138,7 +139,7 @@ export class LogisticsCalculator {
         } else {
           // Strategy B: Default behavior -> Use strictly the default rate_id from lane
           if (!(lane as any).rate_id) {
-            console.warn(`[Logistics] Lane ${lane.lane_id} missing rate_id. Skipping.`);
+            logger.warn('Lane missing rate_id, skipping', { lane_id: lane.lane_id });
             result.escalation_reasons.push(`MISSING_RATE_ID_ON_LANE: Lane ${lane.lane_id}`);
             result.requires_escalation = true;
             continue;
@@ -147,7 +148,7 @@ export class LogisticsCalculator {
           strategyLog = `Default Rate: ${query.rate_id}`;
         }
 
-        console.log(`[Logistics] Rate filter for lane ${lane.lane_id} (${strategyLog}):`, JSON.stringify(query));
+        logger.debug('Rate filter', { lane_id: lane.lane_id, strategy: strategyLog, query });
 
         const rawRateCards = cache.query<RateCard>('calc_shipping_rate_cards', query);
 
@@ -161,9 +162,9 @@ export class LogisticsCalculator {
             return true;
         });
 
-        console.log(`[Logistics] Found ${rateCards.length} active/valid rate cards for lane ${lane.lane_id} (Raw: ${rawRateCards.length})`);
+        logger.debug('Rate cards found', { lane_id: lane.lane_id, count: rateCards.length, raw: rawRateCards.length });
         if (rateCards.length > 0) {
-           console.log(`[Logistics] Rate card bases: ${rateCards.map(rc => rc.price_basis).join(', ')}`);
+           logger.debug('Rate card bases', { bases: rateCards.map(rc => rc.price_basis) });
         }
 
         if (rateCards.length === 0) {
@@ -185,7 +186,7 @@ export class LogisticsCalculator {
           // Calculate base cost
           const baseCost = this.calculateBaseCost(rateCard, passport, converter);
           
-          console.log(`[Logistics] Selected rate_id: ${rateCard.rate_id} (Mode: ${rateCard.mode}, BaseCost: ${baseCost})`);
+          logger.debug('Selected rate card', { rate_id: rateCard.rate_id, mode: rateCard.mode, base_cost: baseCost });
 
           // Calculate surcharges
           const surcharges = cache.query<Surcharge>('calc_shipping_surcharges', {
@@ -398,7 +399,7 @@ export class LogisticsCalculator {
 
       const amount = Number(surcharge.amount);
       if (!Number.isFinite(amount)) {
-          console.warn(`[Logistics] Invalid surcharge amount: ${surcharge.amount} (id: ${surcharge.surcharge_id})`);
+          logger.warn('Invalid surcharge amount, skipping', { surcharge_id: surcharge.surcharge_id, amount: surcharge.amount });
           continue; 
       }
 

@@ -2,12 +2,12 @@
 
 import { AppShell } from "@/components/layout/AppShell";
 import { Section } from "@/components/layout/Section";
-import { 
-  Calculator, 
-  Truck, 
-  ShieldCheck, 
-  AlertCircle, 
-  Info, 
+import {
+  Calculator,
+  Truck,
+  ShieldCheck,
+  AlertCircle,
+  Info,
   ArrowRight,
   TrendingUp,
   Globe,
@@ -17,14 +17,15 @@ import {
   ChevronRight,
   PackageCheck
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import dynamic from 'next/dynamic';
-import { 
-  calculateLandedCost, 
-  lookupHSCode, 
-  type DealPassport, 
+import {
+  calculateLandedCost,
+  lookupHSCode,
+  type DealPassport,
   type CalculationPackage as CalcResult,
-  type HSCodeLookupResult 
+  type HSCodeLookupResult
 } from "@/lib/api/calc";
 import { SUPPORTED_COUNTRIES } from "@/lib/constants/countries";
 import { CalculatorPDF } from "@/components/pdf/CalculatorPDF";
@@ -35,7 +36,9 @@ const PDFDownloadLink = dynamic(
   { ssr: false }
 );
 
-export default function LogisticsCalculatorPage() {
+function LogisticsCalculatorContent() {
+  const searchParams = useSearchParams();
+
   const [formData, setFormData] = useState<DealPassport>({
     dest_country: 'KZ',
     incoterms: 'CIF',
@@ -52,6 +55,13 @@ export default function LogisticsCalculatorPage() {
   const [result, setResult] = useState<CalcResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const hsCode = searchParams.get('hs_code');
+    if (hsCode) {
+      setFormData(prev => ({ ...prev, hs_code: hsCode }));
+    }
+  }, [searchParams]);
 
   // HS Lookup State
   const [hsInfo, setHsInfo] = useState<HSCodeLookupResult | null>(null);
@@ -606,5 +616,13 @@ export default function LogisticsCalculatorPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+export default function LogisticsCalculatorPage() {
+  return (
+    <Suspense fallback={null}>
+      <LogisticsCalculatorContent />
+    </Suspense>
   );
 }

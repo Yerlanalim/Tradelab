@@ -30,9 +30,11 @@ export class TariffLexer {
       
       // 2. Specific Rate
       // Pattern: amount currency (per|/) [multiplier] unit
+      // Group 5 captures the full multiplier (e.g. "1000 " from "за 1000 шт"),
+      // so normalizeUnit receives "1000 шт" and can match the 1000pcs pattern.
       const specificPattern = new RegExp(
         `^(\\d+(\\.\\d+)?)\\s*(${this.rules.currencies.join('|')})` +
-        `\\s*(за|per|/)\\s*1?\\s*(\\d+\\s*)?(${this.rules.units.map(u => u.pattern).join('|')})`,
+        `\\s*(за|per|/)\\s*((?:\\d+\\s*)?)(${this.rules.units.map(u => u.pattern).join('|')})`,
         'i'
       );
       const specificMatch = remaining.match(specificPattern);
@@ -41,7 +43,7 @@ export class TariffLexer {
           type: 'specific',
           amount: parseFloat(specificMatch[1]),
           currency: specificMatch[3].toUpperCase(),
-          unit: this.normalizeUnit(specificMatch[6])
+          unit: this.normalizeUnit((specificMatch[5] || '') + specificMatch[6])
         });
         pos += specificMatch[0].length;
         continue;

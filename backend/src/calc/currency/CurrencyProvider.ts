@@ -1,5 +1,6 @@
 import { CurrencyConverter } from './CurrencyConverter';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '../../logger';
 import { 
   SUPABASE_URL, 
   SUPABASE_SERVICE_ROLE_KEY 
@@ -45,7 +46,7 @@ export class CurrencyProvider {
     
     this.lastFetch = Date.now();
     this.ratesLoaded = true;
-    console.log(`[CurrencyProvider] Rates loaded from Supabase (date: ${data[0].date})`);
+    logger.info('Currency rates loaded', { date: data[0].date });
   }
 
   async ensureRates(): Promise<void> {

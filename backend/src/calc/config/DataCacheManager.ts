@@ -1,8 +1,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { 
-  SUPABASE_URL, 
-  SUPABASE_SERVICE_ROLE_KEY 
+import {
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY
 } from '../../config.js';
+import { logger } from '../../logger';
 
 export class DataCacheManager {
   private supabase: SupabaseClient;
@@ -23,7 +24,11 @@ export class DataCacheManager {
       'calc_shipping_lanes',
       'calc_shipping_rate_cards',
       'calc_shipping_surcharges',
-      'calc_shipping_last_mile'
+      'calc_shipping_last_mile',
+      'calc_rule_versions',
+      'calc_incoterms_rules',
+      'calc_component_inclusion_rules',
+      'calc_insurance_rules'
     ];
 
     // Critical tables that must load successfully
@@ -42,7 +47,7 @@ export class DataCacheManager {
       
       if (error) {
         const errorMsg = `Error refreshing cache for ${table}: ${error.message}`;
-        console.error(`[DataCacheManager] ${errorMsg}`);
+        logger.error(errorMsg);
         
         if (criticalTables.includes(table)) {
           errors.push(errorMsg);
@@ -58,7 +63,7 @@ export class DataCacheManager {
     }
 
     this.lastRefresh = Date.now();
-    console.log(`[DataCacheManager] Cache refreshed at ${new Date().toISOString()}`);
+    logger.info('Cache refreshed', { at: new Date().toISOString() });
   }
 
   query<T = any>(table: string, filters: Record<string, any> = {}): T[] {

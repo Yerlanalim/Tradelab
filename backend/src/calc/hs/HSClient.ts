@@ -1,5 +1,6 @@
 import { TariffInfo, DutyAST } from '../types/contracts';
 import { TariffParser } from '../duty/TariffParser';
+import { logger } from '../../logger';
 
 export class HSClient {
   private baseURL: string;
@@ -29,16 +30,16 @@ export class HSClient {
       if (Date.now() - cb.lastFailureTime > cb.resetTimeout) {
         cb.state = 'HALF_OPEN';
         cb.trialInFlight = true;
-        console.warn('[HSClient] Circuit breaker OPEN -> HALF_OPEN, sending trial request');
+        logger.warn('Circuit breaker OPEN -> HALF_OPEN, sending trial request');
         return false;
       }
-      console.warn(`[HSClient] Circuit breaker OPEN (failures: ${cb.failures})`);
+      logger.warn('Circuit breaker OPEN', { failures: cb.failures });
       return true;
     }
 
     // HALF_OPEN: пропускаем только один пробный запрос
     if (cb.trialInFlight) {
-      console.warn('[HSClient] Circuit breaker HALF_OPEN, trial in flight — blocking request');
+      logger.warn('Circuit breaker HALF_OPEN, trial in flight — blocking request');
       return true;
     }
     cb.trialInFlight = true;
@@ -52,14 +53,14 @@ export class HSClient {
     cb.trialInFlight = false;
     if (cb.state === 'HALF_OPEN' || cb.failures >= cb.failureThreshold) {
       cb.state = 'OPEN';
-      console.warn(`[HSClient] Circuit breaker -> OPEN (failures: ${cb.failures})`);
+      logger.warn('Circuit breaker -> OPEN', { failures: cb.failures });
     }
   }
 
   private recordSuccess() {
     const cb = this.circuitBreaker;
     if (cb.state === 'HALF_OPEN') {
-      console.warn('[HSClient] Circuit breaker HALF_OPEN -> CLOSED (trial succeeded)');
+      logger.info('Circuit breaker HALF_OPEN -> CLOSED (trial succeeded)');
     }
     cb.failures = 0;
     cb.state = 'CLOSED';

@@ -1,17 +1,18 @@
-import { 
-  DealPassport, 
-  CustomsValueResult, 
-  DutyVatResult, 
+import {
+  DealPassport,
+  CustomsValueResult,
+  DutyVatResult,
   DutyBreakdown,
   CustomsFee,
   HSResult,
   DutyAST,
-  Source 
+  Source
 } from '../types/contracts';
 import { HSClient } from '../hs/HSClient';
 import { DataCacheManager } from '../config/DataCacheManager';
 import { CurrencyConverter } from '../currency/CurrencyConverter';
 import { UnsupportedTariffError } from '../errors';
+import { logger } from '../../logger';
 
 interface CountryTaxConfig {
   country_code: string;
@@ -20,11 +21,16 @@ interface CountryTaxConfig {
 }
 
 interface CustomsFeesConfig {
-  fee_id: string;
+  fee_id?: string;
   country_code: string;
   fee_type: string;
-  amount: number;
-  currency: string;
+  calculation_rule: {
+    type: string;
+    currency: string;
+    brackets?: Array<{ max_customs_value_kzt: number | null; fee_kzt: number }>;
+    amount?: number;
+    percent?: number;
+  };
   active: boolean;
 }
 
@@ -141,7 +147,7 @@ export class DutyVatCalculator {
     }
 
     // Calculate VAT
-    console.log(`[DEBUG] Calling calculateVAT for ${passport.dest_country}, Customs: ${customsValue.customs_value_usd}, Duty: ${dutyBreakdowns.length > 0 ? [dutyMin, dutyMax] : [0, 0]}, Exempt: ${vatExempt}`);
+    logger.debug('calculateVAT', { country: passport.dest_country, customs: customsValue.customs_value_usd, duty: dutyBreakdowns.length > 0 ? [dutyMin, dutyMax] : [0, 0], vat_exempt: vatExempt });
     const vatResult = await this.calculateVAT(
       passport,
       customsValue.customs_value_usd,
@@ -175,8 +181,39 @@ export class DutyVatCalculator {
       result.duty.range_usd[1] + result.vat.range_usd[1]
     ];
 
-    // Calculate customs fees (stub for MVP)
-    result.assumptions.push('Customs fees not included in MVP calculation');
+    // Calculate customs fees from calc_customs_fees_config
+    const feeConfigs = this.cache.query<CustomsFeesConfig>(
+      'calc_customs_fees_config',
+      { country_code: passport.dest_country }
+    ).filter(c => c.active);
+
+    if (feeConfigs.length > 0) {
+      const customsValueUsd = customsValue.customs_value_usd[0];
+
+      for (const config of feeConfigs) {
+        const rule = config.calculation_rule;
+
+        if (rule.type === 'tiered' && rule.brackets && rule.currency === 'KZT') {
+          const customsValueKZT = this.converter.convert(customsValueUsd, 'USD', 'KZT');
+          const bracket = rule.brackets.find(b =>
+            b.max_customs_value_kzt === null || customsValueKZT <= b.max_customs_value_kzt
+          );
+
+          if (bracket) {
+            result.fees_usd.push({
+              name: config.fee_type,
+              amount: this.converter.toInternal(bracket.fee_kzt, 'KZT'),
+              currency: 'USD',
+              source_ref: 'calc_customs_fees_config'
+            });
+          }
+        }
+      }
+    }
+
+    if (result.fees_usd.length === 0) {
+      result.assumptions.push('Customs fees not included in MVP calculation');
+    }
 
     return result;
   }
@@ -196,18 +233,36 @@ export class DutyVatCalculator {
       }
 
       case 'specific': {
-        // MVP: only support kg unit
-        if (ast.unit !== 'kg') {
-          throw new UnsupportedTariffError(`Specific duty unit '${ast.unit}' not supported in MVP (only 'kg')`);
-        }
-
-        if (!passport.weight_gross_kg || passport.weight_gross_kg <= 0) {
-          throw new UnsupportedTariffError('weight_gross_kg required for specific duty calculation');
-        }
-
         const amountUSD = this.converter.toInternal(ast.amount, ast.currency);
-        const duty = amountUSD * passport.weight_gross_kg;
-        return [duty, duty];
+
+        switch (ast.unit) {
+          case 'kg': {
+            if (!passport.weight_gross_kg || passport.weight_gross_kg <= 0) {
+              throw new UnsupportedTariffError('weight_gross_kg required for specific duty calculation');
+            }
+            return [amountUSD * passport.weight_gross_kg, amountUSD * passport.weight_gross_kg];
+          }
+          case 'pcs': {
+            if (!passport.quantity || passport.quantity <= 0) {
+              throw new UnsupportedTariffError('MISSING_INPUT:quantity — required for pcs-based duty');
+            }
+            return [amountUSD * passport.quantity, amountUSD * passport.quantity];
+          }
+          case 'l': {
+            if (!passport.volume_l || passport.volume_l <= 0) {
+              throw new UnsupportedTariffError('MISSING_INPUT:volume_l — required for per-litre duty');
+            }
+            return [amountUSD * passport.volume_l, amountUSD * passport.volume_l];
+          }
+          case 'm2': {
+            if (!passport.area_m2 || passport.area_m2 <= 0) {
+              throw new UnsupportedTariffError('MISSING_INPUT:area_m2 — required for per-m² duty');
+            }
+            return [amountUSD * passport.area_m2, amountUSD * passport.area_m2];
+          }
+          default:
+            throw new UnsupportedTariffError(`UNSUPPORTED_UNIT:${ast.unit} — escalation required`);
+        }
       }
 
       case 'sum': {

@@ -48,12 +48,31 @@ vi.mock('../src/calc/config/DataCacheManager', () => ({
     async ensureLoaded() {
       return undefined;
     }
-    query() {
-      return [{
-        country_code: 'KZ',
-        import_vat_default_rate: 0.12,
-        active: true
-      }];
+    query(table: string) {
+      if (table === 'calc_country_tax_config') {
+        return [{ country_code: 'KZ', import_vat_default_rate: 0.12, active: true }];
+      }
+      if (table === 'calc_incoterms_rules') {
+        return [{
+          rule_version: 'v1.0.0',
+          incoterms: 'CIF',
+          customs_components_in_base: [],
+          landed_components_in_total: ['product', 'duty', 'vat'],
+          critical_components: [],
+          unknown_policy: 'ASSUME_DEFAULT'
+        }];
+      }
+      if (table === 'calc_insurance_rules') {
+        return [{
+          rule_version: 'v1.0.0',
+          rate_type: 'percent',
+          rate_value: 0.005,
+          base_type: 'invoice',
+          min_premium_usd: 5,
+          source_quality: 'fallback'
+        }];
+      }
+      return [];
     }
   }
 }));

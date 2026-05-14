@@ -2,8 +2,9 @@
 
 import { AppShell } from "@/components/layout/AppShell";
 import { Section } from "@/components/layout/Section";
-import { Search, Hash, Info, ExternalLink, Loader2 } from "lucide-react";
+import { Search, Hash, Info, Calculator, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 interface HSCodeRecord {
   code: string;
@@ -13,7 +14,24 @@ interface HSCodeRecord {
   score: number;
 }
 
+const TNVED_BASE = process.env.NEXT_PUBLIC_TNVED_URL || 'http://localhost:3002';
+
+function normalizeCodeResponse(data: any): HSCodeRecord[] {
+  const records: HSCodeRecord[] = [];
+  if (data.exact) {
+    records.push({ code: data.exact.code, name: data.exact.name, path: data.exact.path, tariff_clean: data.exact.tariff_clean, score: 1 });
+  }
+  const examples: any[] = data.prefix_info?.examples_4 || data.prefix_info?.examples_6 || [];
+  for (const ex of examples) {
+    if (!records.some(r => r.code === ex.code)) {
+      records.push({ code: ex.code, name: ex.name, path: ex.path, tariff_clean: ex.tariff_clean, score: 0.9 });
+    }
+  }
+  return records;
+}
+
 export default function HSSearchPage() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<HSCodeRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -29,19 +47,19 @@ export default function HSSearchPage() {
       setIsLoading(true);
       setError(null);
       try {
-        const port = 3002;
-        const response = await fetch(`http://localhost:${port}/hs/search?q=${encodeURIComponent(query)}&limit=20`);
-        const data = await response.json();
-        
-        if (data.results) {
-          setResults(data.results);
-        } else if (data.exact) {
-          setResults([data.exact]);
+        const isCode = /^\d+$/.test(query.trim()) && query.trim().length >= 4;
+        let data: any;
+
+        if (isCode) {
+          const response = await fetch(`${TNVED_BASE}/hs/code/${query.trim()}`);
+          data = await response.json();
+          setResults(normalizeCodeResponse(data));
         } else {
-          setResults([]);
+          const response = await fetch(`${TNVED_BASE}/hs/search?q=${encodeURIComponent(query)}&limit=20`);
+          data = await response.json();
+          setResults(data.results || []);
         }
       } catch (err) {
-        console.error("HS Search error:", err);
         setError("Не удалось подключиться к сервису поиска. Убедитесь, что сервис запущен на порту 3002.");
       } finally {
         setIsLoading(false);
@@ -120,9 +138,12 @@ export default function HSSearchPage() {
                       </div>
                     )}
                   </div>
-                  <button className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-medium text-white transition-all border border-white/10">
-                    Подробнее
-                    <ExternalLink className="w-4 h-4" />
+                  <button
+                    onClick={() => router.push(`/library/logistics-calculator?hs_code=${item.code}`)}
+                    className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 rounded-xl text-sm font-medium text-emerald-300 transition-all border border-emerald-500/20"
+                  >
+                    <Calculator className="w-4 h-4" />
+                    Рассчитать
                   </button>
                 </div>
               </div>

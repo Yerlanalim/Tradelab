@@ -1,6 +1,7 @@
 import { DealPassport, CustomsValueResult, LogisticsResult, Source } from '../types/contracts';
 import { CurrencyConverter } from '../currency/CurrencyConverter';
 import { loadCustomsValueRules } from '../config/loadConfig';
+import { logger } from '../../logger';
 
 export class EscalationRequiredError extends Error {
   constructor(message: string) {
@@ -108,7 +109,7 @@ export class CustomsValueCalculator {
       result.assumptions.push(
         `Insurance: ${(countryRules.insurance_rate * 100).toFixed(2)}% (config v${this.rules.version})`
       );
-      console.log(`[DEBUG] CustomsCalc Insurance: ${insuranceUSD} (rate: ${countryRules.insurance_rate}, invoice: ${invoiceUSD})`);
+      logger.debug('CustomsCalc insurance', { insurance_usd: insuranceUSD, rate: countryRules.insurance_rate, invoice_usd: invoiceUSD });
     }
     
     result.customs_value_usd = [min, max];

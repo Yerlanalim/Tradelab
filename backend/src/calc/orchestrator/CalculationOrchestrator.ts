@@ -1,4 +1,4 @@
-import { DealPassport, CalculationPackage, HSResult, LogisticsResult, CustomsValueResult, DutyVatResult } from '../types/contracts';
+import { DealPassport, CalculationPackage, HSResult, LogisticsResult, CustomsValueResult, DutyVatResult, CustomsFee } from '../types/contracts';
 import { EscalationRequiredError as CustomsEscalationError } from '../customs/CustomsValueCalculator';
 import { CurrencyProvider } from '../currency/CurrencyProvider';
 import { CustomsValueCalculator } from '../customs/CustomsValueCalculator';
@@ -164,11 +164,16 @@ export class CalculationOrchestrator {
 
   private async runV2(passport: DealPassport): Promise<CalculationPackage> {
     const startTime = Date.now();
-    
+
     // 1. Normalization
     const { input, notes, metadata } = this.normalizeIntake(passport);
 
     try {
+      // DDP always requires escalation in both legacy and V2 paths
+      if (input.incoterms === 'DDP') {
+        throw new CustomsEscalationError('DDP incoterms requires escalation: duty paid breaks transparent base calculation');
+      }
+
       // 2. Rule Selection (Read-only for now)
       const selectedRules: any[] = [];
       try {
@@ -764,13 +769,15 @@ export class CalculationOrchestrator {
     const lastMileUsd = logistics.last_mile_usd || [0, 0];
     const dutyUsd = dutyVat.duty.range_usd;
     const vatUsd = dutyVat.vat.range_usd;
-    const feesUsd = dutyVat.fees_usd.reduce((sum: number, fee: any) => sum + fee.amount_usd, 0);
+    const feesUsd = dutyVat.fees_usd.reduce((sum: number, fee: CustomsFee) => sum + fee.amount, 0);
     
     // Determine which logicistics components to include in Landed Cost
     // Rules:
     // - CIF/CIP: Freight to border is already in invoice. Only add last mile.
     // - EXW/FOB/FCA/DAP: Add both freight to border and last mile.
-    const isFreightIncludedInInvoice = ['CIF', 'CIP'].includes(passport.incoterms);
+    // - DAP + invoice_includes_freight=true: freight already paid by seller, don't double-count.
+    const isFreightIncludedInInvoice = ['CIF', 'CIP'].includes(passport.incoterms)
+      || passport.invoice_includes_freight === true;
     
     let includedShipping: [number, number] | null = null;
     let addedBorderFreight: [number, number] | null = null;

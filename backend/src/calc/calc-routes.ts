@@ -2,11 +2,12 @@ import express, { Request, Response } from 'express';
 import { DealPassport } from './types/contracts';
 import { validateForCalculation } from './validators/validateForCalculation';
 import { CalculationOrchestrator } from './orchestrator/CalculationOrchestrator';
-import { 
-  EscalationRequiredError, 
+import {
+  EscalationRequiredError,
   UnsupportedFeatureError,
   UnsupportedTariffError
 } from './errors';
+import { logger } from '../logger';
 
 const router = express.Router();
 const orchestrator = new CalculationOrchestrator();
@@ -36,7 +37,7 @@ router.get('/hs/lookup', async (req: Request, res: Response) => {
     const data = await response.json();
     return res.json(data);
   } catch (e: any) {
-    console.error('[HS Lookup] TNVED service unavailable:', e.message);
+    logger.error('TNVED service unavailable', { error: e.message });
     // Fail gracefully so UI just doesn't show hint
     return res.status(503).json({ error: 'TNVED service unavailable' });
   }
@@ -76,7 +77,7 @@ router.post('/calc/quote', async (req: Request, res: Response) => {
     }
     
     // Log request parameters
-    console.log('[calc/quote] Request params:', {
+    logger.info('calc/quote request', {
       dest_country: passport.dest_country,
       country_of_origin: passport.country_of_origin,
       incoterms: passport.incoterms,
@@ -89,10 +90,10 @@ router.post('/calc/quote', async (req: Request, res: Response) => {
 
     // Log selected modes
     const usedModes = calculationPackage.logistics?.scenarios?.map((s: any) => s.mode) || [];
-    console.log('[calc/quote] Final used modes:', usedModes);
+    logger.debug('calc/quote used modes', { modes: usedModes });
     
     // Log completion
-    console.log('[calc/quote] Calculation completed', {
+    logger.info('calc/quote completed', {
       total_ms: calculationPackage.meta.query_time_ms,
       dest_country: passport.dest_country,
       status: calculationPackage.status,
@@ -106,7 +107,7 @@ router.post('/calc/quote', async (req: Request, res: Response) => {
   } catch (error: any) {
     // Handle known escalation errors
     if (error instanceof EscalationRequiredError) {
-      console.log('[calc/quote] Escalation required:', error.message);
+      logger.warn('calc/quote escalation required', { reason: error.message });
       return res.status(200).json({
         meta: {
           query_time_ms: Date.now() - startTime,
@@ -122,7 +123,7 @@ router.post('/calc/quote', async (req: Request, res: Response) => {
     
     // Handle unsupported tariff errors
     if (error instanceof UnsupportedTariffError) {
-      console.log('[calc/quote] Unsupported tariff:', error.message);
+      logger.warn('calc/quote unsupported tariff', { reason: error.message });
       return res.status(200).json({
         meta: {
           query_time_ms: Date.now() - startTime,
@@ -138,7 +139,7 @@ router.post('/calc/quote', async (req: Request, res: Response) => {
     
     // Handle unsupported feature errors
     if (error instanceof UnsupportedFeatureError) {
-      console.log('[calc/quote] Unsupported feature:', error.message);
+      logger.warn('calc/quote unsupported feature', { reason: error.message });
       return res.status(200).json({
         meta: {
           query_time_ms: Date.now() - startTime,
@@ -153,7 +154,7 @@ router.post('/calc/quote', async (req: Request, res: Response) => {
     }
     
     // Real failures (DB down, bugs, etc.)
-    console.error('[calc/quote] Internal error:', error);
+    logger.error('calc/quote internal error', { error: error?.message, stack: error?.stack });
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message || 'An unexpected error occurred'

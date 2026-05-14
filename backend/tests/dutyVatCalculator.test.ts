@@ -31,9 +31,9 @@ describe('DutyVatCalculator', () => {
       getTariff: vi.fn()
     } as any;
 
-    // Mock DataCacheManager
+    // Mock DataCacheManager (default: empty — each test sets VAT config via mockReturnValueOnce)
     mockCache = {
-      query: vi.fn()
+      query: vi.fn().mockReturnValue([])
     } as any;
 
     calculator = new DutyVatCalculator(mockHSClient, mockCache, converter);
@@ -78,7 +78,7 @@ describe('DutyVatCalculator', () => {
       };
 
       (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
-      (mockCache.query as any).mockReturnValue([{
+      (mockCache.query as any).mockReturnValueOnce([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -134,7 +134,7 @@ describe('DutyVatCalculator', () => {
       };
 
       (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
-      (mockCache.query as any).mockReturnValue([{
+      (mockCache.query as any).mockReturnValueOnce([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -192,7 +192,7 @@ describe('DutyVatCalculator', () => {
       };
 
       (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
-      (mockCache.query as any).mockReturnValue([{
+      (mockCache.query as any).mockReturnValueOnce([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -248,7 +248,7 @@ describe('DutyVatCalculator', () => {
       };
 
       (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
-      (mockCache.query as any).mockReturnValue([{
+      (mockCache.query as any).mockReturnValueOnce([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -300,7 +300,7 @@ describe('DutyVatCalculator', () => {
           vat_exempt: false
         });
 
-      (mockCache.query as any).mockReturnValue([{
+      (mockCache.query as any).mockReturnValueOnce([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -353,7 +353,7 @@ describe('DutyVatCalculator', () => {
       };
 
       (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
-      (mockCache.query as any).mockReturnValue([{
+      (mockCache.query as any).mockReturnValueOnce([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -405,11 +405,7 @@ describe('DutyVatCalculator', () => {
       };
 
       (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
-      (mockCache.query as any).mockReturnValue([{
-        country_code: 'KZ',
-        import_vat_default_rate: 0.12,
-        active: true
-      }]);
+      // VAT exempt: calculateVAT returns early without querying cache; no mockReturnValueOnce needed
 
       const result = await calculator.execute(passport, hsResult, customsValue);
 
@@ -460,7 +456,7 @@ describe('DutyVatCalculator', () => {
       };
 
       (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
-      (mockCache.query as any).mockReturnValue([{
+      (mockCache.query as any).mockReturnValueOnce([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -483,7 +479,7 @@ describe('DutyVatCalculator', () => {
       };
 
       (mockHSClient.getTariff as any).mockRejectedValue(new Error('Network error'));
-      (mockCache.query as any).mockReturnValue([{
+      (mockCache.query as any).mockReturnValueOnce([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
@@ -594,7 +590,7 @@ describe('DutyVatCalculator', () => {
       };
 
       (mockHSClient.getTariff as any).mockResolvedValue(tariffInfo);
-      (mockCache.query as any).mockReturnValue([{
+      (mockCache.query as any).mockReturnValueOnce([{
         country_code: 'KZ',
         import_vat_default_rate: 0.12,
         active: true
