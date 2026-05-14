@@ -109,8 +109,8 @@ describe('V2 Step 2 - Customs V2 Implementation Check', () => {
       currency: 'USD',
       weight_gross_kg: 100,
       hs_code: '8471300000',
-      invoice_includes_freight: false,
-      invoice_includes_insurance: false
+      invoice_includes_freight: 'no',
+      invoice_includes_insurance: 'no'
     };
 
     const result = await orchestrator.execute(passport);

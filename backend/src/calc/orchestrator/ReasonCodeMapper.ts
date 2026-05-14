@@ -78,7 +78,8 @@ export class ReasonCodeMapper {
       else if (reason.includes('Low HS confidence')) codes.add(ReasonCode.HS_CONFIDENCE_LOW);
       else if (reason.includes('Multiple HS candidates')) codes.add(ReasonCode.HS_MULTIPLE_CANDIDATES);
       else if (reason.includes('No parsed duty')) codes.add(ReasonCode.HS_DUTY_PARSE_ERROR);
-      else if (reason.includes('Unsupported tariff') || reason.includes('tariff lookup failed')) codes.add(ReasonCode.TARIFF_NOT_SUPPORTED);
+      else if (reason.includes('UNSUPPORTED_UNIT:') || reason.includes('Unsupported tariff') || reason.includes('tariff lookup failed')) codes.add(ReasonCode.TARIFF_NOT_SUPPORTED);
+      else if (reason.includes('MISSING_INPUT:')) codes.add(ReasonCode.MISSING_INPUT);
       else if (reason.includes('TNVED service error') || reason.includes('TNVED lookup failed')) codes.add(ReasonCode.TNVED_LOOKUP_FAILED);
       
       // Customs/Incoterms

@@ -1,13 +1,30 @@
 import { CustomsValueCalculator, EscalationRequiredError } from '../src/calc/customs/CustomsValueCalculator';
 import { CurrencyConverter } from '../src/calc/currency/CurrencyConverter';
 import { DealPassport, LogisticsResult } from '../src/calc/types/contracts';
+import { DataCacheManager } from '../src/calc/config/DataCacheManager';
+
+function mockCache(): DataCacheManager {
+  const cache = {
+    query(table: string, filters: Record<string, any> = {}) {
+      if (table === 'calc_insurance_rules') {
+        // Country-specific overrides
+        if (filters.country_code === 'KZ') return [{ rate_value: 0.006, border_freight_fraction: 0.7 }];
+        if (filters.country_code === 'RU') return [{ rate_value: 0.005, border_freight_fraction: 0.65 }];
+        // Global fallback
+        if (filters.source_quality === 'fallback') return [{ rate_value: 0.005, border_freight_fraction: 0.7 }];
+      }
+      return [];
+    }
+  } as unknown as DataCacheManager;
+  return cache;
+}
 
 describe('CustomsValueCalculator', () => {
   let calculator: CustomsValueCalculator;
   let converter: CurrencyConverter;
 
   beforeEach(() => {
-    calculator = new CustomsValueCalculator();
+    calculator = new CustomsValueCalculator(mockCache());
     converter = new CurrencyConverter('USD');
     // Set USD rate to 1 for simplicity
     converter.setRate('USD', 1);
@@ -34,7 +51,7 @@ describe('CustomsValueCalculator', () => {
       expect(result.missing_inputs).toEqual([]);
       expect(result.formula_used).toBe('Invoice value (CIF includes freight+insurance)');
       expect(result.sources).toHaveLength(1);
-      expect(result.sources[0].type).toBe('config_file');
+      expect(result.sources[0].type).toBe('supabase_table');
     });
   });
 
@@ -46,7 +63,7 @@ describe('CustomsValueCalculator', () => {
         goods_value: 1000,
         currency: 'USD',
         weight_gross_kg: 50,
-        invoice_includes_insurance: false
+        invoice_includes_insurance: 'no'
       };
 
       const logistics: LogisticsResult = {
@@ -68,7 +85,7 @@ describe('CustomsValueCalculator', () => {
         goods_value: 1000,
         currency: 'USD',
         weight_gross_kg: 50,
-        invoice_includes_insurance: false
+        invoice_includes_insurance: 'no'
       };
 
       const logistics: LogisticsResult = {
@@ -88,14 +105,14 @@ describe('CustomsValueCalculator', () => {
       expect(result.assumptions.some(a => a.includes('0.60%'))).toBe(true); // KZ override
     });
 
-    it('should not add insurance if invoice_includes_insurance is true', () => {
+    it('should not add insurance if invoice_includes_insurance is yes', () => {
       const passport: DealPassport = {
         dest_country: 'KZ',
         incoterms: 'FOB',
         goods_value: 1000,
         currency: 'USD',
         weight_gross_kg: 50,
-        invoice_includes_insurance: true
+        invoice_includes_insurance: 'yes'
       };
 
       const logistics: LogisticsResult = {
@@ -119,7 +136,7 @@ describe('CustomsValueCalculator', () => {
         goods_value: 2000,
         currency: 'USD',
         weight_gross_kg: 100,
-        invoice_includes_insurance: false
+        invoice_includes_insurance: 'no'
       };
 
       const logistics: LogisticsResult = {
@@ -158,15 +175,15 @@ describe('CustomsValueCalculator', () => {
       expect(result.formula_used).toBe('Invoice value (DAP freight inclusion unknown)');
     });
 
-    it('should calculate correctly when invoice_includes_freight is true', () => {
+    it('should calculate correctly when invoice_includes_freight is yes', () => {
       const passport: DealPassport = {
         dest_country: 'KZ',
         incoterms: 'DAP',
         goods_value: 1000,
         currency: 'USD',
         weight_gross_kg: 50,
-        invoice_includes_freight: true,
-        invoice_includes_insurance: false
+        invoice_includes_freight: 'yes',
+        invoice_includes_insurance: 'no'
       };
 
       const logistics: LogisticsResult = {
@@ -181,15 +198,15 @@ describe('CustomsValueCalculator', () => {
       expect(result.formula_used).toBe('Invoice value (DAP includes freight)');
     });
 
-    it('should require freight_to_border when invoice_includes_freight is false', () => {
+    it('should require freight_to_border when invoice_includes_freight is no', () => {
       const passport: DealPassport = {
         dest_country: 'KZ',
         incoterms: 'DAP',
         goods_value: 1000,
         currency: 'USD',
         weight_gross_kg: 50,
-        invoice_includes_freight: false,
-        invoice_includes_insurance: false
+        invoice_includes_freight: 'no',
+        invoice_includes_insurance: 'no'
       };
 
       const logistics: LogisticsResult = {

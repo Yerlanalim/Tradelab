@@ -140,16 +140,16 @@
   - какие записи Supabase были применены (id + таблица),
   - формулы и подстановки,
   - применённые fallback.
-- [ ] `calculation_trace` присутствует в ответе `/api/calc/quote`
+- [x] `calculation_trace` присутствует в ответе `/api/calc/quote` (rule_version, selected_rules, selected_records, components)
 
 ### 5.2 Отображение trace в UI (debug-панель)
 - **Действие:** Сворачиваемый блок "Детали расчёта" под результатом.
-- [ ] Trace доступен в UI (за аккордеоном)
+- [x] Trace доступен в UI (аккордеон: reason_codes, applied rules, data sources, formulas)
 
 ### 5.3 Стандартизировать reason-codes
 - **Документ:** `docs/refactoriing_plan_calc.md:3.4`
 - **Действие:** Проверить что все reason-codes из каталога реально возвращаются (не свободный текст), добавить missing.
-- [ ] Reason-codes — machine-readable строки, не свободный текст
+- [x] Reason-codes — machine-readable строки; добавлены маппинги UNSUPPORTED_UNIT: и MISSING_INPUT: в ReasonCodeMapper
 
 ---
 
@@ -159,23 +159,23 @@
 ### 6.1 Создать и засеять таблицы правил в Supabase
 - `calc_rule_versions`, `calc_incoterms_rules`, `calc_component_inclusion_rules`, `calc_insurance_rules`
 - **Документ:** `docs/refactoriing_plan_calc.md:2`
-- [ ] Миграции созданы и применены
-- [ ] Данные для v1.0 правил засеяны (CIF/FOB/EXW/DAP)
+- [x] Миграции созданы и применены (001-006)
+- [x] Данные для v1.0 правил засеяны (CIF/FOB/EXW/DAP/DDP), CALC_ENGINE=v2 по умолчанию
 
 ### 6.2 Починить `CustomsValueCalculatorV2_Real.ts`
 - Реализовать полноценный data-driven CustomsValue на основе `calc_incoterms_rules`.
-- [ ] `V2_CUSTOMS_VALUE_IMPL=v2` работает без ошибок
+- [x] `CustomsValueCalculatorV2.ts` реализован, `V2_CUSTOMS_VALUE_IMPL=v2` по умолчанию
 
 ### 6.3 Перевести tri-state поля в API-контракт
 - **Документ:** `docs/refactoriing_plan_calc.md:2` — breaking change
 - Заменить `invoice_includes_freight?: boolean` на tri-state `'yes' | 'no' | 'unknown'`.
-- [ ] Контракт `DealPassport` обновлён
-- [ ] Все тесты обновлены и проходят
+- [x] Контракт `DealPassport` обновлён (backend + frontend)
+- [x] Все тесты обновлены и проходят (80/80)
 
 ### 6.4 Убрать hardcode из CustomsValueCalculator
 - Удалить `customs_value_rules.json` и `cities_aliases.json`, перевести на чтение из Supabase через `RuleRepository`.
-- [ ] Нет расчётных констант в JSON-файлах
-- [ ] `RuleRepository` использует только Supabase
+- [x] Нет расчётных констант в JSON-файлах (файлы удалены)
+- [x] `CustomsValueCalculator` и `LogisticsCalculator` читают из `DataCacheManager`; `RuleRepository` расширен `getCityAliases()` и `border_freight_fraction`
 
 **Готовность Этапа 6:** `CALC_ENGINE=v2` работает, все golden-тесты проходят, diff с legacy < $0.01.
 
@@ -201,5 +201,5 @@
 | 2 — Данные Supabase | ✅ Завершён (status=ok, landed_cost=[5640,5640]) |
 | 3 — Логические дыры | ✅ Завершён (80/80 тестов, typecheck OK) |
 | 4 — UI | ✅ Завершён (калькулятор + HS-поиск + связка через URL params) |
-| 5 — Наблюдаемость | 🔴 Не начат |
-| 6 — V2 пайплайн | 🔴 Не начат |
+| 5 — Наблюдаемость | ✅ Завершён (trace в API + UI-аккордеон + reason-codes) |
+| 6 — V2 пайплайн | ✅ Завершён (80/80 тестов, typecheck OK) |

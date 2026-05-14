@@ -13,8 +13,8 @@ export interface DealPassport {
   weight_gross_kg: number;       // > 0, required for logistics
   
   // For customs value
-  invoice_includes_freight?: boolean;
-  invoice_includes_insurance?: boolean;
+  invoice_includes_freight?: 'yes' | 'no' | 'unknown';
+  invoice_includes_insurance?: 'yes' | 'no' | 'unknown';
   
   // Optional
   weight_net_kg?: number;

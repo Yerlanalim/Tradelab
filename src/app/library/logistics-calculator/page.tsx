@@ -15,6 +15,7 @@ import {
   Scale,
   Loader2,
   ChevronRight,
+  ChevronDown,
   PackageCheck
 } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
@@ -49,7 +50,7 @@ function LogisticsCalculatorContent() {
     // Optional/New Fields initialized
     origin_country: undefined,
     mode_preference: undefined,
-    invoice_includes_freight: false,
+    invoice_includes_freight: 'unknown' as const,
   });
 
   const [result, setResult] = useState<CalcResult | null>(null);
@@ -117,7 +118,7 @@ function LogisticsCalculatorContent() {
 
   const missingFields = requirements.requiredFields.filter(f => {
       const val = formData[f as keyof DealPassport];
-      if (typeof val === 'boolean') return false; // boolean is always present
+      if (val === 'yes' || val === 'no' || val === 'unknown') return false;
       if (typeof val === 'number') return isNaN(val) || val <= 0;
       return !val || (val as string).trim() === '';
   });
@@ -127,6 +128,7 @@ function LogisticsCalculatorContent() {
   const [isClient, setIsClient] = useState(false);
   const [orderInProgress, setOrderInProgress] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
+  const [traceOpen, setTraceOpen] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
@@ -361,18 +363,21 @@ function LogisticsCalculatorContent() {
 
                {/* DAP Specific: Invoice Includes Freight */}
                {formData.incoterms === 'DAP' && (
-                   <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10">
-                      <input 
-                        type="checkbox"
+                   <div className="flex items-start gap-3 p-3 bg-white/5 rounded-xl border border-white/10">
+                      <select
                         id="invoice_includes_freight"
                         name="invoice_includes_freight"
-                        checked={formData.invoice_includes_freight || false}
-                        onChange={(e) => setFormData(p => ({ ...p, invoice_includes_freight: e.target.checked }))}
-                        className="w-5 h-5 rounded border-white/20 bg-white/10 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                      />
-                      <label htmlFor="invoice_includes_freight" className="text-sm text-white/80 cursor-pointer">
+                        value={formData.invoice_includes_freight || 'unknown'}
+                        onChange={(e) => setFormData(p => ({ ...p, invoice_includes_freight: e.target.value as 'yes' | 'no' | 'unknown' }))}
+                        className="bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                      >
+                        <option value="unknown">Не указано</option>
+                        <option value="yes">Да, включена</option>
+                        <option value="no">Нет, не включена</option>
+                      </select>
+                      <label htmlFor="invoice_includes_freight" className="text-sm text-white/80">
                           В инвойс включена доставка?
-                          <span className="block text-xs text-white/40">Если да, мы не будем считать фрахт</span>
+                          <span className="block text-xs text-white/40">Влияет на расчёт таможенной стоимости</span>
                       </label>
                    </div>
                )}
@@ -572,6 +577,67 @@ function LogisticsCalculatorContent() {
                   </div>
                 </div>
               </div>
+
+              {/* Trace Accordion */}
+              {result.calculation_trace && (
+                <div className="ui-glass-panel rounded-2xl overflow-hidden">
+                  <button
+                    onClick={() => setTraceOpen(o => !o)}
+                    className="w-full flex items-center justify-between p-4 text-left hover:bg-white/5 transition-colors"
+                  >
+                    <span className="text-xs font-bold text-white/40 uppercase tracking-wider">Детали расчёта</span>
+                    <ChevronDown className={`w-4 h-4 text-white/30 transition-transform ${traceOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {traceOpen && (
+                    <div className="px-4 pb-4 space-y-4 border-t border-white/5">
+                      {result.reason_codes?.length > 0 && (
+                        <div className="pt-3">
+                          <p className="text-[10px] font-bold text-white/30 uppercase mb-2">Reason Codes</p>
+                          <div className="flex flex-wrap gap-2">
+                            {result.reason_codes.map((c: string) => (
+                              <span key={c} className="px-2 py-0.5 bg-yellow-500/10 text-yellow-400 rounded text-[11px] font-mono border border-yellow-500/20">{c}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {result.calculation_trace.v2_metadata?.selected_rules?.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-bold text-white/30 uppercase mb-2">Применённые правила</p>
+                          <div className="space-y-1">
+                            {result.calculation_trace.v2_metadata.selected_rules.map((r: any, i: number) => (
+                              <div key={i} className="flex items-center gap-2 text-[11px]">
+                                <span className="font-mono text-emerald-400">{r.rule_id}</span>
+                                <span className="text-white/30">v{r.version}</span>
+                                <span className="text-white/20">({r.type})</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {result.calculation_trace.selected_records?.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-bold text-white/30 uppercase mb-2">Источники данных</p>
+                          <div className="space-y-1">
+                            {result.calculation_trace.selected_records.map((r: any, i: number) => (
+                              <div key={i} className="flex items-center gap-2 text-[11px]">
+                                <span className="text-white/50 font-mono">{r.type}</span>
+                                <span className="text-emerald-400/70">{r.id}</span>
+                                {r.version && <span className="text-white/20">{r.version}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {result.calculation_trace.components && (
+                        <div>
+                          <p className="text-[10px] font-bold text-white/30 uppercase mb-2">Формулы</p>
+                          <pre className="text-[10px] text-white/40 font-mono whitespace-pre-wrap">{JSON.stringify(result.calculation_trace.components, null, 2)}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Call to Action */}
               <div className="flex flex-col sm:flex-row justify-end gap-4 p-4">

@@ -1,7 +1,6 @@
 import { DealPassport, LogisticsResult, LogisticsScenario, Source } from '../types/contracts';
 import { DataCacheManager } from '../config/DataCacheManager';
 import { CurrencyConverter } from '../currency/CurrencyConverter';
-import { loadCityAliases } from '../config/loadConfig';
 import { logger } from '../../logger';
 
 interface ShippingLane {
@@ -51,15 +50,8 @@ interface LastMile {
 }
 
 export class LogisticsCalculator {
-  private cityAliases: Record<string, string>;
-  
-  constructor() {
-    this.cityAliases = loadCityAliases();
-  }
-  
-  private normalizeCity(city?: string): string | null {
-    if (!city) return null;
-    return this.cityAliases[city] || city;
+  private normalizeCity(city: string, aliases: Record<string, string>): string {
+    return aliases[city.toLowerCase()] || city;
   }
   
   async calculate(
@@ -77,9 +69,14 @@ export class LogisticsCalculator {
       escalation_reasons: []
     };
 
-    // Normalize cities
-    const originCity = this.normalizeCity(passport.origin_city);
-    const destCity = this.normalizeCity(passport.dest_city);
+    // Normalize cities using Supabase cache
+    const cityAliasList = cache.query<any>('calc_city_aliases', {});
+    const cityAliases: Record<string, string> = {};
+    for (const row of cityAliasList) {
+      if (row.is_active !== false) cityAliases[row.alias] = row.canonical_city;
+    }
+    const originCity = passport.origin_city ? this.normalizeCity(passport.origin_city, cityAliases) : null;
+    const destCity = passport.dest_city ? this.normalizeCity(passport.dest_city, cityAliases) : null;
     let originCountry = passport.country_of_origin;
     if (!originCountry) {
         logger.warn('No country_of_origin provided, defaulting to CN');

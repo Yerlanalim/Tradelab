@@ -494,6 +494,9 @@ describe('LogisticsCalculator', () => {
       };
 
       (mockCache.query as any).mockImplementation((table: string, filters: any) => {
+        if (table === 'calc_city_aliases') {
+          return [{ alias: 'алматы', canonical_city: 'Almaty', is_active: true }];
+        }
         if (table === 'calc_shipping_lanes') {
           // Should match normalized "Almaty"
           if (filters.dest_city === 'Almaty') {

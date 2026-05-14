@@ -19,6 +19,7 @@ export interface InsuranceRule {
   base_type: 'invoice' | 'invoice_plus_border_freight' | 'fixed';
   min_premium_usd: number;
   source_quality: 'contract' | 'market' | 'fallback';
+  border_freight_fraction: number;
 }
 
 export class RuleRepository {
@@ -90,13 +91,25 @@ export class RuleRepository {
     }
 
     // Sort/select best match if multiple logic needed (not needed for simple V1 seed)
-    const best = rules[0]; 
+    const best = rules[0];
     return {
         rate_type: best.rate_type,
         rate_value: Number(best.rate_value),
         base_type: best.base_type,
         min_premium_usd: Number(best.min_premium_usd),
-        source_quality: best.source_quality
+        source_quality: best.source_quality,
+        border_freight_fraction: Number(best.border_freight_fraction ?? 0.7)
     };
+  }
+
+  getCityAliases(): Record<string, string> {
+    const rows = this.cache.query<any>('calc_city_aliases', { rule_version: this.version });
+    const result: Record<string, string> = {};
+    for (const row of rows) {
+      if (row.is_active !== false) {
+        result[row.alias] = row.canonical_city;
+      }
+    }
+    return result;
   }
 }

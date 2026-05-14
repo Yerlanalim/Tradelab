@@ -14,7 +14,7 @@ export interface DealPassport {
   dest_city?: string;
   origin_country?: CountryCode;
   mode_preference?: 'air' | 'road' | 'rail' | 'sea';
-  invoice_includes_freight?: boolean;
+  invoice_includes_freight?: 'yes' | 'no' | 'unknown';
 }
 
 export interface LogisticsScenario {

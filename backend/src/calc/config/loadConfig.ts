@@ -15,13 +15,6 @@ export interface ParserRules {
   operators: Array<{pattern: string; type: string; escalation?: boolean}>;
 }
 
-export interface CustomsValueRules {
-  version: string;
-  insurance_rate: number;
-  border_freight_fraction: number;
-  country_overrides?: Record<string, Partial<Omit<CustomsValueRules, 'version' | 'country_overrides'>>>;
-}
-
 function loadJson<T>(relativePath: string): T {
   const fullPath = path.join(backendRoot, relativePath);
   
@@ -35,14 +28,6 @@ function loadJson<T>(relativePath: string): T {
   } catch (error: any) {
     throw new Error(`Failed to load config from ${fullPath}: ${error.message}`);
   }
-}
-
-export function loadCustomsValueRules(): CustomsValueRules {
-  return loadJson('data/calculator/customs_value_rules.json');
-}
-
-export function loadCityAliases(): Record<string, string> {
-  return loadJson<Record<string, string>>('data/calculator/cities_aliases.json');
 }
 
 export function loadTariffParserRules(): ParserRules {

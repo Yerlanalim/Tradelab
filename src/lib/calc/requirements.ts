@@ -32,8 +32,8 @@ export const ALL_FIELDS: FieldName[] = [
  * @param formData Current form data (needed for dependencies like invoice_includes_freight)
  */
 export function getRequirements(
-    incoterms: Incoterms, 
-    formData?: { invoice_includes_freight?: boolean }
+    incoterms: Incoterms,
+    formData?: { invoice_includes_freight?: 'yes' | 'no' | 'unknown' }
 ): RequirementsResult {
     
     // Base required for EVERY request
@@ -70,7 +70,7 @@ export function getRequirements(
             };
 
         case 'DAP':
-             const invoiceIncludesFreight = formData?.invoice_includes_freight === true;
+             const invoiceIncludesFreight = formData?.invoice_includes_freight === 'yes';
              
              const dapRequired: FieldName[] = [...baseRequired, 'invoice_includes_freight'];
              if (!invoiceIncludesFreight) {

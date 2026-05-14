@@ -31,7 +31,7 @@ export class CalculationOrchestrator {
     this.currencyProvider = new CurrencyProvider();
     this.hsClient = new HSClient();
     this.dataCache = new DataCacheManager();
-    this.customsCalculator = new CustomsValueCalculator();
+    this.customsCalculator = new CustomsValueCalculator(this.dataCache);
     this.dutyVatCalculator = new DutyVatCalculator(
       this.hsClient,
       this.dataCache,
@@ -125,15 +125,9 @@ export class CalculationOrchestrator {
     // mode_preference vs shipping_mode (normalization)
     // For now we just ensure it's present if available
     
-    // Semantics normalization (tri-state)
-    const toTriState = (val: boolean | undefined | null): 'yes' | 'no' | 'unknown' => {
-      if (val === true) return 'yes';
-      if (val === false) return 'no';
-      return 'unknown';
-    };
-
-    (input as any).v2_freight_inclusion = toTriState(passport.invoice_includes_freight);
-    (input as any).v2_insurance_inclusion = toTriState(passport.invoice_includes_insurance);
+    // Pass tri-state fields directly to V2 resolution slots
+    (input as any).v2_freight_inclusion = input.invoice_includes_freight ?? 'unknown';
+    (input as any).v2_insurance_inclusion = input.invoice_includes_insurance ?? 'unknown';
 
     return { 
       input, 
@@ -777,7 +771,7 @@ export class CalculationOrchestrator {
     // - EXW/FOB/FCA/DAP: Add both freight to border and last mile.
     // - DAP + invoice_includes_freight=true: freight already paid by seller, don't double-count.
     const isFreightIncludedInInvoice = ['CIF', 'CIP'].includes(passport.incoterms)
-      || passport.invoice_includes_freight === true;
+      || passport.invoice_includes_freight === 'yes';
     
     let includedShipping: [number, number] | null = null;
     let addedBorderFreight: [number, number] | null = null;

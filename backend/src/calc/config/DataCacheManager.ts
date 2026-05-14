@@ -28,7 +28,8 @@ export class DataCacheManager {
       'calc_rule_versions',
       'calc_incoterms_rules',
       'calc_component_inclusion_rules',
-      'calc_insurance_rules'
+      'calc_insurance_rules',
+      'calc_city_aliases'
     ];
 
     // Critical tables that must load successfully
