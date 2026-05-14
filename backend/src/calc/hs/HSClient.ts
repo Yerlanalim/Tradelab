@@ -9,9 +9,10 @@ export class HSClient {
   private circuitBreaker = {
     failures: 0,
     lastFailureTime: 0,
-    state: 'CLOSED' as 'CLOSED' | 'OPEN',
+    state: 'CLOSED' as 'CLOSED' | 'OPEN' | 'HALF_OPEN',
     failureThreshold: 3,
-    resetTimeout: 60000 // 1 minute
+    resetTimeout: 60000, // 1 minute
+    trialInFlight: false
   };
   
   constructor() {
@@ -20,32 +21,49 @@ export class HSClient {
   }
   
   private isCircuitOpen(): boolean {
-    if (this.circuitBreaker.state === 'OPEN') {
-      if (Date.now() - this.circuitBreaker.lastFailureTime > this.circuitBreaker.resetTimeout) {
-        // TODO: add HALF_OPEN trial request instead of direct transition to CLOSED
-        // Current implementation immediately transitions OPEN -> CLOSED without testing
-        console.warn('[HSClient] Circuit breaker transitioning OPEN -> CLOSED (no HALF_OPEN state)');
-        this.circuitBreaker.state = 'CLOSED';
-        this.circuitBreaker.failures = 0;
+    const cb = this.circuitBreaker;
+
+    if (cb.state === 'CLOSED') return false;
+
+    if (cb.state === 'OPEN') {
+      if (Date.now() - cb.lastFailureTime > cb.resetTimeout) {
+        cb.state = 'HALF_OPEN';
+        cb.trialInFlight = true;
+        console.warn('[HSClient] Circuit breaker OPEN -> HALF_OPEN, sending trial request');
         return false;
       }
-      console.warn(`[HSClient] Circuit breaker is OPEN (failures: ${this.circuitBreaker.failures})`);
+      console.warn(`[HSClient] Circuit breaker OPEN (failures: ${cb.failures})`);
       return true;
     }
+
+    // HALF_OPEN: пропускаем только один пробный запрос
+    if (cb.trialInFlight) {
+      console.warn('[HSClient] Circuit breaker HALF_OPEN, trial in flight — blocking request');
+      return true;
+    }
+    cb.trialInFlight = true;
     return false;
   }
 
   private recordFailure() {
-    this.circuitBreaker.failures++;
-    this.circuitBreaker.lastFailureTime = Date.now();
-    if (this.circuitBreaker.failures >= this.circuitBreaker.failureThreshold) {
-      this.circuitBreaker.state = 'OPEN';
+    const cb = this.circuitBreaker;
+    cb.failures++;
+    cb.lastFailureTime = Date.now();
+    cb.trialInFlight = false;
+    if (cb.state === 'HALF_OPEN' || cb.failures >= cb.failureThreshold) {
+      cb.state = 'OPEN';
+      console.warn(`[HSClient] Circuit breaker -> OPEN (failures: ${cb.failures})`);
     }
   }
 
   private recordSuccess() {
-    this.circuitBreaker.failures = 0;
-    this.circuitBreaker.state = 'CLOSED';
+    const cb = this.circuitBreaker;
+    if (cb.state === 'HALF_OPEN') {
+      console.warn('[HSClient] Circuit breaker HALF_OPEN -> CLOSED (trial succeeded)');
+    }
+    cb.failures = 0;
+    cb.state = 'CLOSED';
+    cb.trialInFlight = false;
   }
 
   async getTariff(hsCode: string): Promise<TariffInfo> {
